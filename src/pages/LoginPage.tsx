@@ -1,12 +1,13 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Shield, Lock, Eye, EyeOff, AlertCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from '../i18n/useTranslation';
+import { AxiosError } from 'axios';
 
 export default function LoginPage() {
     const navigate = useNavigate();
-    const { login, isAuthenticated } = useAuth();
+    const { login, isAuthenticated, authLoading } = useAuth();
     const { t } = useTranslation();
 
     const [email, setEmail] = useState('');
@@ -16,11 +17,12 @@ export default function LoginPage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
-    // Already authenticated — redirect
-    if (isAuthenticated) {
-        navigate('/dashboard', { replace: true });
-        return null;
-    }
+    // Redirect via useEffect — NEVER during render
+    useEffect(() => {
+        if (!authLoading && isAuthenticated) {
+            navigate('/dashboard', { replace: true });
+        }
+    }, [isAuthenticated, authLoading, navigate]);
 
     const handleSubmit = useCallback(async (e: React.FormEvent) => {
         e.preventDefault();
@@ -28,14 +30,43 @@ export default function LoginPage() {
         setLoading(true);
         try {
             await login(email, password);
-            navigate('/dashboard', { replace: true });
+            // Navigation happens via the useEffect above when isAuthenticated flips
         } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : 'unknown';
-            setError(msg === 'account_disabled' ? 'Your account has been deactivated.' : t('auth.invalid_credentials'));
+            if (err instanceof AxiosError) {
+                const status = err.response?.status;
+                const message = err.response?.data?.message ?? '';
+                if (status === 401) {
+                    setError(t('auth.invalid_credentials'));
+                } else if (status === 403) {
+                    setError(
+                        typeof message === 'string' && message.includes('locked')
+                            ? 'Account temporarily locked. Try again later.'
+                            : 'Your account has been deactivated.',
+                    );
+                } else {
+                    setError('Login failed. Please try again.');
+                }
+            } else {
+                setError('Network error. Please check your connection.');
+            }
         } finally {
             setLoading(false);
         }
-    }, [email, password, login, navigate, t]);
+    }, [email, password, login, t]);
+
+    // Show nothing while checking stored auth
+    if (authLoading) {
+        return (
+            <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-primary)' }}>
+                <Loader2 className="w-6 h-6 text-accent-cyan animate-spin" />
+            </div>
+        );
+    }
+
+    // Already authenticated — useEffect handles redirect, render nothing to avoid flash
+    if (isAuthenticated) {
+        return null;
+    }
 
     return (
         <div className="min-h-screen flex items-center justify-center px-4" style={{ background: 'var(--bg-primary)' }}>
@@ -50,7 +81,7 @@ export default function LoginPage() {
                     <div className="w-12 h-12 rounded-sm bg-accent-cyan/15 border border-accent-cyan/30 flex items-center justify-center mb-4 shadow-[0_0_30px_rgba(0,200,150,0.12)]">
                         <Shield className="w-6 h-6 text-accent-cyan" />
                     </div>
-                    <span className="mono font-bold tracking-widest text-text-primary">IDFR PLATFORM</span>
+                    <span className="mono font-bold tracking-widest text-text-primary">SMARTRECOVERY</span>
                     <span className="text-text-muted text-xs mt-1 tracking-wide">Forensic Investigation System</span>
                 </div>
 
@@ -152,7 +183,7 @@ export default function LoginPage() {
                 {/* Back to landing */}
                 <div className="text-center mt-5">
                     <Link to="/" className="text-text-muted text-[11px] mono hover:text-text-secondary transition-colors tracking-wide">
-                        ← IDFR Platform
+                        ← SmartRecovery
                     </Link>
                 </div>
             </div>

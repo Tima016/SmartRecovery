@@ -1,60 +1,53 @@
-name: idfr-platform
+name: dfip-platform
+# =====================================================================
+# Digital Forensic Investigation Platform — Full Stack Docker Compose
+# =====================================================================
 
-# ═══════════════════════════════════════════════════════
-# NETWORK
-# ═══════════════════════════════════════════════════════
 networks:
-  idfr-net:
+  dfip-net:
     driver: bridge
 
-# ═══════════════════════════════════════════════════════
-# VOLUMES
-# ═══════════════════════════════════════════════════════
 volumes:
   pg_data:
-    driver: local
   redis_data:
-    driver: local
+  minio_data:
 
-# ═══════════════════════════════════════════════════════
-# SERVICES
-# ═══════════════════════════════════════════════════════
+
 services:
 
-  # ─── PostgreSQL 15 ────────────────────────────────
+  # ─── PostgreSQL 15 ───────────────────────────────────────────────
   db:
     image: postgres:15-alpine
-    container_name: idfr-db
+    container_name: dfip-db
     restart: unless-stopped
-    env_file: .env
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-idfr}
-      POSTGRES_USER: ${POSTGRES_USER:-idfr}
+      POSTGRES_DB: ${POSTGRES_DB:-dfip}
+      POSTGRES_USER: ${POSTGRES_USER:-dfip}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
     volumes:
       - pg_data:/var/lib/postgresql/data
     networks:
-      - idfr-net
+      - dfip-net
+    ports:
+      - "127.0.0.1:5432:5432"
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-idfr} -d ${POSTGRES_DB:-idfr}" ]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dfip} -d ${POSTGRES_DB:-dfip}" ]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
-    ports:
-      - "127.0.0.1:5432:5432"
 
-  # ─── Redis ─────────────────────────────────────────
+  # ─── Redis 7 ─────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    container_name: idfr-redis
+    container_name: dfip-redis
     restart: unless-stopped
-    env_file: .env
-    command: redis-server --requirepass ${REDIS_PASSWORD:-changeme} --maxmemory 128mb --maxmemory-policy allkeys-lru
+    command: >
+      redis-server --requirepass ${REDIS_PASSWORD:-changeme} --maxmemory 256mb --maxmemory-policy noeviction --appendonly yes
     volumes:
       - redis_data:/data
     networks:
-      - idfr-net
+      - dfip-net
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
@@ -63,55 +56,169 @@ services:
       timeout: 5s
       retries: 3
 
-  # ─── Backend ──────────────────────────────────────
+  # ─── MinIO Object Storage ─────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: dfip-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    volumes:
+      - minio_data:/data
+    networks:
+      - dfip-net
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ─── Backend API (NestJS) ─────────────────────────────────────────
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: idfr-backend
+    container_name: dfip-backend
     restart: unless-stopped
     env_file: .env
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       PORT: 5000
-      DATABASE_URL: postgresql://${POSTGRES_USER:-idfr}:${POSTGRES_PASSWORD:-changeme}@db:5432/${POSTGRES_DB:-idfr}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dfip}:${POSTGRES_PASSWORD:-changeme}@db:5432/${POSTGRES_DB:-dfip}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_EVIDENCE_BUCKET: dfip-evidence
+      MINIO_REPORTS_BUCKET: dfip-reports
       REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379
-      JWT_SECRET: ${JWT_SECRET:-changeme_set_in_env}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+
+    ports:
+      - "5000:5000"
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio:
+        condition: service_healthy
     networks:
-      - idfr-net
+      - dfip-net
     expose:
       - "5000"
     healthcheck:
-      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/health" ]
-      interval: 15s
-      timeout: 5s
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/api/v1/health" ]
+      interval: 20s
+      timeout: 10s
       retries: 3
-      start_period: 15s
+      start_period: 30s
 
-  # ─── Frontend (React + nginx) ────────────────────
+  # ─── Imaging Worker (BullMQ) ──────────────────────────────────────
+  imaging-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dfip}:${POSTGRES_PASSWORD:-changeme}@db:5432/${POSTGRES_DB:-dfip}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+    command: [ "node", "dist/src/workers/imaging.worker.js" ]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - dfip-net
+
+  # ─── Forensic Pipeline Worker (BullMQ) ─────────────────────────────
+  forensic-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dfip}:${POSTGRES_PASSWORD:-changeme}@db:5432/${POSTGRES_DB:-dfip}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+    command: [ "node", "dist/src/workers/forensic-pipeline.worker.js" ]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - dfip-net
+
+  # ─── Frontend (React + Vite + Nginx) ─────────────────────────────
   frontend:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: idfr-frontend
+    container_name: dfip-frontend
     restart: unless-stopped
-    env_file: .env
     depends_on:
       backend:
         condition: service_healthy
     networks:
-      - idfr-net
+      - dfip-net
     ports:
       - "7000:80"
     healthcheck:
-      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/health" ]
+      test: [ "CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1/health || exit 1" ]
       interval: 20s
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  # ─── Backup Cron (Daily automated backups) ──────────────────────
+  backup:
+    image: alpine:3.19
+    container_name: dfip-backup
+    restart: "no"
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./backups:/backups
+      - pg_data:/pg_data:ro
+      - redis_data:/redis_data:ro
+      - minio_data:/minio_data:ro
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dfip}
+      POSTGRES_USER: ${POSTGRES_USER:-dfip}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
+      BACKUP_KEEP_COUNT: 7
+    entrypoint: /bin/sh
+    command: [ "-c", "echo 'Backup container ready. Run: docker compose exec backup sh /scripts/backup.sh'" ]
+    networks:
+      - dfip-net

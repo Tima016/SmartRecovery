@@ -1,7 +1,20 @@
 import { useState, useEffect } from 'react';
-import { Shield, Users, ScrollText, ToggleLeft, ToggleRight, ChevronDown, Terminal } from 'lucide-react';
-import { useAuth, type User, type Role } from '../context/AuthContext';
+import { Shield, Users, ScrollText, ToggleLeft, ToggleRight, ChevronDown, Terminal, Loader2 } from 'lucide-react';
+import { useAuth, type Role } from '../context/AuthContext';
 import { useTranslation } from '../i18n/useTranslation';
+import { usersApi } from '../api/users.api';
+import { auditApi } from '../api/audit.api';
+
+// ─── Types ────────────────────────────────────────────────────────────
+interface AdminUser {
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    role: Role;
+    isActive?: boolean;
+    createdAt?: string;
+}
 
 interface LogEntry {
     time: string;
@@ -10,47 +23,105 @@ interface LogEntry {
     detail: string;
 }
 
-function getLogs(): LogEntry[] {
-    try {
-        return JSON.parse(localStorage.getItem('idfr_logs') || '[]');
-    } catch {
-        return [];
-    }
-}
+const roleColor: Record<Role, string> = {
+    ADMIN: 'text-[#f59e0b] bg-amber-500/10 border-amber-500/25',
+    ANALYST: 'text-accent-cyan bg-accent-cyan/10 border-accent-cyan/25',
+    INVESTIGATOR: 'text-accent-cyan bg-accent-cyan/10 border-accent-cyan/25',
+    AUDITOR: 'text-purple-400 bg-purple-500/10 border-purple-500/25'
+};
+
+const availableRoles: Role[] = ['ADMIN', 'ANALYST', 'INVESTIGATOR', 'AUDITOR'];
 
 export default function AdminPanel() {
-    const { getAllUsers, setUserActive, setUserRole, user: currentUser } = useAuth();
+    const { user: currentUser } = useAuth();
     const { t } = useTranslation();
     const [tab, setTab] = useState<'users' | 'logs'>('users');
-    const [users, setUsers] = useState<User[]>([]);
+    const [users, setUsers] = useState<AdminUser[]>([]);
     const [logs, setLogs] = useState<LogEntry[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
     const [roleDropdown, setRoleDropdown] = useState<string | null>(null);
 
-    const refresh = () => {
-        setUsers(getAllUsers());
-        setLogs(getLogs());
+    const fetchData = async () => {
+        try {
+            setLoading(true);
+            const [usersRes, logsRes] = await Promise.allSettled([
+                usersApi.getAll(),
+                auditApi.getLogs({ limit: 50 }),
+            ]);
+
+            const usersData = usersRes.status === 'fulfilled' ? usersRes.value.data : [];
+            const userList = Array.isArray(usersData) ? usersData : (usersData?.data ?? []);
+            setUsers(userList.map((u: any) => ({
+                id: u.id,
+                email: u.email,
+                firstName: u.firstName ?? '',
+                lastName: u.lastName ?? '',
+                role: u.role ?? 'ANALYST',
+                isActive: u.isActive ?? u.active ?? true,
+                createdAt: u.createdAt ?? '—',
+            })));
+
+            const logsData = logsRes.status === 'fulfilled' ? logsRes.value.data : [];
+            const logList = Array.isArray(logsData) ? logsData : (logsData?.data ?? []);
+            setLogs(logList.map((l: any) => ({
+                time: l.createdAt ?? l.time ?? '—',
+                event: l.action ?? l.event ?? '—',
+                actor: l.actor ?? l.user ?? l.email ?? '—',
+                detail: typeof l.details === 'string' ? l.details : (l.detail ?? JSON.stringify(l.details ?? '')),
+            })));
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : 'Failed to load admin data');
+        } finally {
+            setLoading(false);
+        }
     };
 
-    useEffect(() => { refresh(); }, []);
+    useEffect(() => { fetchData(); }, []);
 
-    const handleToggleActive = (u: User) => {
-        // Can't deactivate yourself
+    const handleToggleActive = async (u: AdminUser) => {
         if (u.id === currentUser?.id) return;
-        setUserActive(u.id, !u.active);
-        refresh();
+        try {
+            await usersApi.update(u.id, { isActive: !u.isActive });
+            await fetchData();
+        } catch {
+            // Silently handle — user will see no change
+        }
     };
 
-    const handleRoleChange = (u: User, role: Role) => {
-        if (u.id === currentUser?.id) return; // can't change own role
-        setUserRole(u.id, role);
-        setRoleDropdown(null);
-        refresh();
+    const handleRoleChange = async (u: AdminUser, role: Role) => {
+        if (u.id === currentUser?.id) return;
+        try {
+            await usersApi.update(u.id, { role });
+            setRoleDropdown(null);
+            await fetchData();
+        } catch {
+            // Silently handle
+        }
     };
 
-    const roleColor: Record<Role, string> = {
-        admin: 'text-[#f59e0b] bg-amber-500/10 border-amber-500/25',
-        investigator: 'text-accent-cyan bg-accent-cyan/10 border-accent-cyan/25',
+    const getUserDisplayName = (u: AdminUser) => `${u.firstName} ${u.lastName}`.trim() || u.email;
+    const getUserInitial = (u: AdminUser) => (u.firstName?.charAt(0) ?? u.email?.charAt(0) ?? 'U').toUpperCase();
+    const getUserDate = (u: AdminUser) => {
+        if (!u.createdAt || u.createdAt === '—') return '—';
+        try { return new Date(u.createdAt).toISOString().split('T')[0]; } catch { return '—'; }
     };
+
+    if (loading) {
+        return (
+            <div className="h-full flex items-center justify-center">
+                <Loader2 className="w-6 h-6 text-accent-cyan animate-spin" />
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="h-full flex items-center justify-center text-status-error text-sm mono">
+                {error}
+            </div>
+        );
+    }
 
     return (
         <div className="h-full flex flex-col overflow-hidden p-4 gap-4">
@@ -68,7 +139,7 @@ export default function AdminPanel() {
                 {(['users', 'logs'] as const).map(tb => (
                     <button
                         key={tb}
-                        onClick={() => { setTab(tb); refresh(); }}
+                        onClick={() => { setTab(tb); }}
                         className={`flex items-center gap-2 px-4 py-2 text-xs mono rounded-sm transition-all ${tab === tb
                             ? 'bg-accent-cyan/10 text-accent-cyan border border-accent-cyan/25'
                             : 'text-text-secondary hover:text-text-primary bg-bg-elevated border border-transparent'
@@ -96,7 +167,7 @@ export default function AdminPanel() {
                         </div>
 
                         <div className="flex-1 overflow-y-auto divide-y divide-bg-border/30">
-                            {users.map(u => (
+                            {users.length > 0 ? users.map(u => (
                                 <div
                                     key={u.id}
                                     className="grid gap-4 px-4 py-3 items-center hover:bg-bg-elevated/40 transition-colors"
@@ -104,10 +175,10 @@ export default function AdminPanel() {
                                 >
                                     <div className="flex items-center gap-2.5">
                                         <div className="w-7 h-7 rounded-full bg-accent-cyan/15 border border-accent-cyan/20 flex items-center justify-center flex-shrink-0">
-                                            <span className="text-accent-cyan text-[10px] font-bold mono">{u.name.charAt(0).toUpperCase()}</span>
+                                            <span className="text-accent-cyan text-[10px] font-bold mono">{getUserInitial(u)}</span>
                                         </div>
                                         <div>
-                                            <div className="text-text-primary text-xs font-medium">{u.name}</div>
+                                            <div className="text-text-primary text-xs font-medium">{getUserDisplayName(u)}</div>
                                             {u.id === currentUser?.id && (
                                                 <div className="text-[9px] mono text-accent-cyan/60">(you)</div>
                                             )}
@@ -125,14 +196,14 @@ export default function AdminPanel() {
                                                 }
                                             }}
                                             disabled={u.id === currentUser?.id}
-                                            className={`flex items-center gap-1 tag border ${roleColor[u.role]} text-[10px] disabled:opacity-60 disabled:cursor-default`}
+                                            className={`flex items-center gap-1 tag border ${roleColor[u.role] ?? roleColor.ANALYST} text-[10px] disabled:opacity-60 disabled:cursor-default`}
                                         >
                                             {u.role}
                                             {u.id !== currentUser?.id && <ChevronDown className="w-2.5 h-2.5" />}
                                         </button>
                                         {roleDropdown === u.id && (
                                             <div className="absolute left-0 top-full mt-1 z-50 bg-bg-panel border border-bg-border rounded-sm shadow-xl min-w-[120px]">
-                                                {(['admin', 'investigator'] as Role[]).map(r => (
+                                                {availableRoles.map(r => (
                                                     <button
                                                         key={r}
                                                         onClick={() => handleRoleChange(u, r)}
@@ -148,29 +219,31 @@ export default function AdminPanel() {
 
                                     {/* Active status */}
                                     <div className="flex items-center gap-1.5">
-                                        <span className={`status-dot ${u.active ? 'ok' : 'error'}`} />
-                                        <span className={`text-[10px] mono ${u.active ? 'text-[#00c896]' : 'text-status-error'}`}>
-                                            {u.active ? 'Active' : 'Disabled'}
+                                        <span className={`status-dot ${u.isActive !== false ? 'ok' : 'error'}`} />
+                                        <span className={`text-[10px] mono ${u.isActive !== false ? 'text-[#00c896]' : 'text-status-error'}`}>
+                                            {u.isActive !== false ? 'Active' : 'Disabled'}
                                         </span>
                                     </div>
 
-                                    <span className="text-text-muted text-xs mono">{u.joinedAt}</span>
+                                    <span className="text-text-muted text-xs mono">{getUserDate(u)}</span>
 
                                     {/* Actions */}
                                     <button
                                         onClick={() => handleToggleActive(u)}
                                         disabled={u.id === currentUser?.id}
                                         title={u.id === currentUser?.id ? 'Cannot deactivate yourself' : undefined}
-                                        className={`flex items-center gap-1.5 text-[10px] mono px-2 py-1.5 rounded-sm border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${u.active
+                                        className={`flex items-center gap-1.5 text-[10px] mono px-2 py-1.5 rounded-sm border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${u.isActive !== false
                                             ? 'bg-status-error/10 border-status-error/20 text-status-error hover:bg-status-error/20'
                                             : 'bg-status-ok/10 border-status-ok/20 text-status-ok hover:bg-status-ok/20'
                                             }`}
                                     >
-                                        {u.active ? <ToggleLeft className="w-3.5 h-3.5" /> : <ToggleRight className="w-3.5 h-3.5" />}
-                                        {u.active ? t('admin.deactivate') : t('admin.activate')}
+                                        {u.isActive !== false ? <ToggleLeft className="w-3.5 h-3.5" /> : <ToggleRight className="w-3.5 h-3.5" />}
+                                        {u.isActive !== false ? t('admin.deactivate') : t('admin.activate')}
                                     </button>
                                 </div>
-                            ))}
+                            )) : (
+                                <div className="flex items-center justify-center h-24 text-text-muted text-xs mono">No users found</div>
+                            )}
                         </div>
                     </>
                 )}

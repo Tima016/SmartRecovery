@@ -1,0 +1,880 @@
+// ====================================================================
+// Digital Forensic Investigation Platform — Prisma Schema
+// ====================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  INVESTIGATOR
+  ANALYST
+  AUDITOR
+}
+
+enum CaseStatus {
+  CREATED
+  IMAGING
+  HASHING
+  SCANNING
+  ANALYZING
+  READY
+  ERROR
+  CLOSED
+  ARCHIVED
+}
+
+enum TaskType {
+  IMAGING
+  HASHING
+  ARTIFACT_EXTRACTION
+  FILE_CARVING
+}
+
+enum TaskStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum CasePriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum CaseClassification {
+  UNCLASSIFIED
+  CONFIDENTIAL
+  SECRET
+  TOP_SECRET
+}
+
+enum EvidenceStatus {
+  PENDING
+  PROCESSING
+  VERIFIED
+  CORRUPTED
+  QUARANTINED
+  INTEGRITY_VIOLATION
+}
+
+enum ImagingStatus {
+  QUEUED
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+}
+
+enum ArtifactType {
+  BROWSER_HISTORY
+  USB_LOG
+  REGISTRY_HIVE
+  EVENT_LOG
+  PREFETCH
+  SHELLBAG
+  NETWORK_CAPTURE
+}
+
+enum RecoveryMethod {
+  METADATA
+  CARVING
+  FRAGMENT_LINK
+}
+
+enum RecoveryStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum FragmentStatus {
+  UNLINKED
+  LINKED
+  ORPHAN
+}
+
+enum TimelineEventType {
+  FILE
+  NETWORK
+  USB
+  REGISTRY
+  PROCESS
+  AUTHENTICATION
+  SYSTEM
+}
+
+enum AuditAction {
+  USER_REGISTER
+  USER_LOGIN
+  USER_LOGOUT
+  USER_FAILED_LOGIN
+  USER_2FA_ENABLE
+  USER_2FA_VERIFY
+  USER_PASSWORD_CHANGE
+  CASE_CREATE
+  CASE_UPDATE
+  CASE_CLOSE
+  CASE_ASSIGN
+  EVIDENCE_UPLOAD
+  EVIDENCE_VERIFY
+  EVIDENCE_DOWNLOAD
+  EVIDENCE_DELETE
+  CUSTODY_RECORD
+  IMAGING_START
+  IMAGING_PAUSE
+  IMAGING_RESUME
+  IMAGING_COMPLETE
+  IMAGING_FAIL
+  ARTIFACT_EXTRACT
+  REPORT_GENERATE
+  TIMELINE_VIEW
+  SYSTEM_CONFIG_CHANGE
+}
+
+// ─────────────────────────────────────────────
+// USER
+// ─────────────────────────────────────────────
+
+model User {
+  id                 String   @id @default(uuid())
+  email              String   @unique
+  passwordHash       String
+  firstName          String
+  lastName           String
+  role               UserRole @default(ANALYST)
+  isActive           Boolean  @default(true)
+  isTwoFactorEnabled Boolean  @default(false)
+  twoFactorSecret    String?
+
+  // Token management
+  refreshTokenHash String?
+  tokenVersion     Int     @default(0)
+
+  // IP restriction
+  allowedIps String[] @default([])
+
+  // Session
+  lastLoginAt      DateTime?
+  lastLoginIp      String?
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  createdCases   Case[]           @relation("CaseCreator")
+  assignedCases  Case[]           @relation("CaseAssignee")
+  caseMembers    CaseMember[]
+  uploads        Evidence[]
+  imagingJobs    ImagingJob[]
+  auditLogs      AuditLog[]
+  chainOfCustody ChainOfCustody[]
+  artifacts      Artifact[]
+  timelineEvents TimelineEvent[]
+
+  // Investigator Workflow
+  createdTags    Tag[]         @relation("TagCreator")
+  createdTagRels TagRelation[] @relation("TagRelationCreator")
+  authoredNotes  Note[]        @relation("NoteAuthor")
+  bookmarks      Bookmark[]    @relation("UserBookmarks")
+
+  @@map("users")
+}
+
+// ─────────────────────────────────────────────
+// CASE
+// ─────────────────────────────────────────────
+
+model Case {
+  id             String             @id @default(uuid())
+  caseNumber     String             @unique
+  title          String
+  description    String?
+  status         CaseStatus         @default(CREATED)
+  version        Int                @default(1)
+  priority       CasePriority       @default(MEDIUM)
+  classification CaseClassification @default(UNCLASSIFIED)
+  tags           String[]           @default([])
+
+  // Relations to user
+  createdById  String
+  createdBy    User    @relation("CaseCreator", fields: [createdById], references: [id])
+  assignedToId String?
+  assignedTo   User?   @relation("CaseAssignee", fields: [assignedToId], references: [id])
+
+  // Dates
+  openedAt  DateTime  @default(now())
+  closedAt  DateTime?
+  updatedAt DateTime  @updatedAt
+
+  // Sub-relations
+  members        CaseMember[]
+  evidence       Evidence[]
+  imagingJobs    ImagingJob[]
+  artifacts      Artifact[]
+  timelineEvents TimelineEvent[]
+  auditLogs      AuditLog[]
+  reports        Report[]
+  recoveredFiles RecoveredFile[]
+  fragments      Fragment[]
+  correlations   Correlation[]
+  tasks          ProcessingTask[]
+
+  // Investigator Workflow
+  customTags        Tag[]
+  suspiciousEvents  SuspiciousEvent[] @relation("CaseSuspiciousEvents")
+  timelineClusters  TimelineCluster[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([createdById])
+  @@map("cases")
+}
+
+model CaseMember {
+  id          String   @id @default(uuid())
+  caseId      String
+  case        Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  permissions String[] @default(["READ"])
+  addedAt     DateTime @default(now())
+
+  @@unique([caseId, userId])
+  @@map("case_members")
+}
+
+// ─────────────────────────────────────────────
+// EVIDENCE
+// ─────────────────────────────────────────────
+
+model ProcessingTask {
+  id         String  @id @default(uuid())
+  caseId     String
+  case       Case    @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  evidenceId String? // Optional: tie task to specific evidence
+
+  type         TaskType
+  status       TaskStatus @default(PENDING)
+  progress     Float      @default(0)
+  errorMessage String?
+
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([caseId])
+  @@index([status])
+  @@map("processing_tasks")
+}
+
+model Evidence {
+  id     String @id @default(uuid())
+  caseId String
+  case   Case   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  // File info
+  originalFilename String
+  mimeType         String?
+  sizeBytes        BigInt
+  description      String?
+
+  // Object storage
+  storageBucket String
+  storageKey    String
+  encryptedKey  String // MinIO key of the encrypted file
+  ivHex         String // AES-256-GCM IV (hex)
+  authTagHex    String // AES-256-GCM auth tag (hex)
+
+  // Hashes (computed on original file)
+  md5    String
+  sha1   String
+  sha256 String
+  sha512 String
+
+  // Status
+  status       EvidenceStatus @default(PENDING)
+  verifiedAt   DateTime?
+  verifiedById String?
+
+  // Uploader
+  uploadedById String
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
+  uploadedAt   DateTime @default(now())
+
+  // Extraction tracking
+  chainOfCustody ChainOfCustody[]
+  artifacts      Artifact[]
+  recoveredFiles RecoveredFile[]
+  fragments      Fragment[]
+  auditLogs      AuditLog[]
+
+  @@index([caseId])
+  @@index([status])
+  @@index([sha256])
+  @@map("evidence")
+}
+
+// ─────────────────────────────────────────────
+// CHAIN OF CUSTODY
+// ─────────────────────────────────────────────
+
+model ChainOfCustody {
+  id         String   @id @default(uuid())
+  evidenceId String
+  evidence   Evidence @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+
+  // Action
+  action String
+  notes  String?
+
+  // Actor
+  performedById String
+  performedBy   User     @relation(fields: [performedById], references: [id])
+  performedAt   DateTime @default(now())
+
+  // Tamper-evident chain
+  prevHash   String? // Hash of the previous custody record
+  recordHash String // SHA-256(prevHash + evidenceId + action + performedById + timestamp)
+
+  // Digital signature (optional — officer signs)
+  signature  String?
+  signerCert String?
+
+  @@index([evidenceId])
+  @@map("chain_of_custody")
+}
+
+// ─────────────────────────────────────────────
+// IMAGING JOB
+// ─────────────────────────────────────────────
+
+model ImagingJob {
+  id     String @id @default(uuid())
+  caseId String
+  case   Case   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  // Source
+  sourceDrive     String
+  sourceSizeBytes BigInt @default(0)
+  imageFormat     String @default("E01")
+
+  // Output
+  outputBucket String?
+  outputKey    String?
+
+  // Status
+  status           ImagingStatus @default(QUEUED)
+  progress         Float         @default(0)
+  transferredBytes BigInt        @default(0)
+  badSectors       Int           @default(0)
+  errorMessage     String?
+
+  // Hash verification
+  hashMd5    String?
+  hashSha1   String?
+  hashSha256 String?
+  hashSha512 String?
+
+  // Resume support
+  resumeOffset BigInt  @default(0)
+  checksum     String?
+
+  // Worker
+  queueJobId String?
+  workerId   String?
+
+  // Actor
+  createdById String
+  createdBy   User      @relation(fields: [createdById], references: [id])
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([caseId])
+  @@index([status])
+  @@map("imaging_jobs")
+}
+
+// ─────────────────────────────────────────────
+// ARTIFACT
+// ─────────────────────────────────────────────
+
+model Artifact {
+  id         String    @id @default(uuid())
+  caseId     String
+  case       Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  evidenceId String?
+  evidence   Evidence? @relation(fields: [evidenceId], references: [id])
+
+  type   ArtifactType
+  source String // e.g. "Chrome", "NTFS", "HKLM\\Software"
+  data   Json // Flexible artifact payload
+  count  Int          @default(0)
+
+  extractedById String
+  extractedBy   User     @relation(fields: [extractedById], references: [id])
+  extractedAt   DateTime @default(now())
+
+  @@index([caseId])
+  @@index([type])
+  @@map("artifacts")
+}
+
+// ─────────────────────────────────────────────
+// TIMELINE EVENT
+// ─────────────────────────────────────────────
+
+model TimelineEvent {
+  id     String @id @default(uuid())
+  caseId String
+  case   Case   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  type         TimelineEventType
+  timestamp    DateTime
+  description  String
+  source       String // Which tool/artifact produced this
+  actor        String? // Username or process
+  targetObject String? // File path, URL, registry key, etc.
+  metadata     Json?
+
+  // Correlation
+  correlationScore Float    @default(0)
+  tags             String[] @default([])
+  notes            String?  @db.Text
+
+  // Traceback
+  artifactId  String?
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([caseId])
+  @@index([type])
+  @@index([timestamp])
+  @@map("timeline_events")
+}
+
+// ─────────────────────────────────────────────
+// REPORT
+// ─────────────────────────────────────────────
+
+model Report {
+  id     String @id @default(uuid())
+  caseId String
+  case   Case   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  format        String // pdf | json | csv
+  storageBucket String
+  storageKey    String
+  sizeBytes     BigInt @default(0)
+
+  generatedAt   DateTime @default(now())
+  generatedById String
+
+  @@index([caseId])
+  @@map("reports")
+}
+
+// ─────────────────────────────────────────────
+// AUDIT LOG (Central + Immutable)
+// ─────────────────────────────────────────────
+
+model AuditLog {
+  id     String  @id @default(uuid())
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  action     AuditAction
+  entityType String?
+  entityId   String?
+
+  caseId     String?
+  case       Case?     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  evidenceId String?
+  evidence   Evidence? @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+
+  details Json?
+
+  ipAddress String?
+  userAgent String?
+  requestId String?
+
+  // Hash chain for tamper detection
+  prevHash   String?
+  recordHash String
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ─────────────────────────────────────────────
+// RECOVERED FILE
+// ─────────────────────────────────────────────
+
+model RecoveredFile {
+  id         String    @id @default(uuid())
+  caseId     String
+  case       Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  evidenceId String?
+  evidence   Evidence? @relation(fields: [evidenceId], references: [id])
+
+  // File identity
+  filename  String
+  mimeType  String?
+  sizeBytes BigInt  @default(0)
+
+  // Recovery metadata
+  method     RecoveryMethod
+  status     RecoveryStatus @default(PENDING)
+  confidence Float          @default(0) // 0–100
+
+  // Location in image
+  offsetStart BigInt @default(0)
+  offsetEnd   BigInt @default(0)
+
+  // Hashes (verified post-recovery)
+  sha256 String?
+  md5    String?
+
+  // Entropy statistics
+  entropyScore    Float   @default(0) // 0–8 bits/byte
+  headerSignature String? // matched file signature (hex)
+  footerSignature String? // matched file footer (hex)
+
+  // Scoring breakdown
+  headerMatchScore  Int @default(0) // 0–30
+  footerMatchScore  Int @default(0) // 0–20
+  entropyRangeScore Int @default(0) // 0–20
+  metadataScore     Int @default(0) // 0–30
+
+  // Internal validation flags
+  hasValidHeader   Boolean @default(false)
+  hasValidFooter   Boolean @default(false)
+  footerDistanceOk Boolean @default(false)
+  byteContinuityOk Boolean @default(false)
+
+  // Forensic versioning (algorithm reproducibility)
+  algorithmVersion    String? // e.g. '1.0.0'
+  scoringModelVersion String? // e.g. '1.0.0'
+  evidenceHash        String? // SHA-256 of source evidence for cross-reference
+
+  // Storage key of extracted file
+  storageBucket String?
+  storageKey    String?
+
+  // Fragment groups
+  fragmentGroup String? // UUID identifying linked fragment set
+  fragments     Fragment[] @relation("RecoveredFileFragments")
+
+  recoveredAt DateTime @default(now())
+
+  @@index([caseId])
+  @@index([method])
+  @@index([confidence])
+  @@index([evidenceId])
+  @@index([caseId, method])
+  @@index([caseId, confidence])
+  @@map("recovered_files")
+}
+
+// ─────────────────────────────────────────────
+// FRAGMENT
+// ─────────────────────────────────────────────
+
+model Fragment {
+  id         String    @id @default(uuid())
+  caseId     String
+  case       Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  evidenceId String?
+  evidence   Evidence? @relation(fields: [evidenceId], references: [id])
+
+  // Fragment position in image
+  offsetStart BigInt
+  offsetEnd   BigInt
+  sizeBytes   BigInt
+
+  // Fragment analysis
+  entropyScore   Float   @default(0)
+  byteContinuity Float   @default(0) // 0–1: fraction of byte transitions that are in-range
+  headerHint     String? // partial header found in fragment
+
+  // Linking
+  status          FragmentStatus @default(UNLINKED)
+  linkProbability Float          @default(0) // 0–1
+  fragmentGroup   String? // shared UUID with sibling fragments
+
+  // Linked recovered file (if resolved)
+  recoveredFileId String?
+  recoveredFile   RecoveredFile? @relation("RecoveredFileFragments", fields: [recoveredFileId], references: [id])
+
+  detectedAt DateTime @default(now())
+
+  @@index([caseId])
+  @@index([fragmentGroup])
+  @@index([entropyScore])
+  @@index([caseId, offsetStart])
+  @@map("fragments")
+}
+
+// ─────────────────────────────────────────────
+// CORRELATION
+// ─────────────────────────────────────────────
+
+model Correlation {
+  id     String @id @default(uuid())
+  caseId String
+  case   Case   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  // Source and target (artifact IDs, event IDs, etc.)
+  sourceId   String
+  sourceType String // 'artifact' | 'timeline_event' | 'recovered_file'
+  targetId   String
+  targetType String
+
+  // Score breakdown
+  weight         Float @default(0) // normalized 0–1
+  temporalScore  Float @default(0) // 0–40
+  actorScore     Float @default(0) // 0–30
+  targetScore    Float @default(0) // 0–20
+  diversityScore Float @default(0) // 0–10
+
+  reason String // human-readable explanation
+
+  // Graph labels
+  sourceLabel String
+  targetLabel String
+
+  computedAt DateTime @default(now())
+
+  @@unique([caseId, sourceId, targetId])
+  @@index([caseId])
+  @@index([weight])
+  @@index([caseId, weight])
+  @@map("correlations")
+}
+
+// ─────────────────────────────────────────────
+// SYSTEM VERSION (forensic traceability)
+// ─────────────────────────────────────────────
+
+model SystemVersion {
+  id                       String   @id @default(uuid())
+  algorithmVersion         String // e.g. '1.0.0'
+  scoringModelVersion      String // e.g. '1.0.0'
+  fragmentLinkerVersion    String // e.g. '1.0.0'
+  correlationEngineVersion String // e.g. '1.0.0'
+  commitHash               String? // git commit SHA
+  buildNumber              String?
+  deployedAt               DateTime @default(now())
+  isActive                 Boolean  @default(true)
+
+  @@map("system_versions")
+}
+
+// ─────────────────────────────────────────────
+// FILE SYSTEM ENTRY (parsed from evidence)
+// ─────────────────────────────────────────────
+
+model FileSystemEntry {
+  id         String @id @default(uuid())
+  caseId     String
+  evidenceId String
+
+  // File identity
+  path        String
+  name        String
+  isDirectory Boolean @default(false)
+  isDeleted   Boolean @default(false)
+  sizeBytes   BigInt  @default(0)
+
+  // Timestamps
+  createdAt    DateTime?
+  modifiedAt   DateTime?
+  accessedAt   DateTime?
+  mftChangedAt DateTime? // NTFS MFT change time
+
+  // Hierarchy
+  parentPath String
+
+  // Permissions (EXT4)
+  permissions String?
+  uid         Int?
+  gid         Int?
+  inode       Int?
+
+  // Type info
+  fileType   String? // MIME type
+  fsType     String // NTFS, FAT32, EXT4
+  attributes Json?
+
+  parsedAt DateTime @default(now())
+
+  @@index([caseId])
+  @@index([evidenceId])
+  @@index([isDeleted])
+  @@index([name])
+  @@index([sizeBytes])
+  @@index([caseId, isDeleted])
+  @@index([caseId, name])
+  @@map("filesystem_entries")
+}
+
+// ─────────────────────────────────────────────
+// DISK IMAGE INFO (parsed metadata)
+// ─────────────────────────────────────────────
+
+model DiskImageInfo {
+  id         String @id @default(uuid())
+  caseId     String
+  evidenceId String @unique
+
+  // Image format
+  imageFormat    String // RAW, E01, DD, IMG
+  totalSizeBytes BigInt
+  sectorSize     Int    @default(512)
+  totalSectors   BigInt
+
+  // Partition info
+  partitionScheme String // MBR, GPT, NONE
+  partitions      Json // Array of partition entries
+
+  // Parse results
+  fileSystemType String? // NTFS, FAT32, EXT4, etc.
+  totalFiles     Int     @default(0)
+  deletedFiles   Int     @default(0)
+
+  parsedAt DateTime @default(now())
+
+  @@map("disk_image_info")
+}
+
+// ─────────────────────────────────────────────
+// INVESTIGATOR WORKFLOW (Tags, Notes, Bookmarks, Detections)
+// ─────────────────────────────────────────────
+
+enum EntityType {
+  FILE
+  ARTIFACT
+  TIMELINE
+  EVIDENCE
+  CASE
+}
+
+model Tag {
+  id          String   @id @default(uuid())
+  caseId      String
+  case        Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  name        String
+  color       String   @default("#8B5CF6") // A default color
+  createdById String
+  createdBy   User     @relation("TagCreator", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  relations TagRelation[]
+
+  @@unique([caseId, name])
+  @@index([caseId])
+  @@map("tags")
+}
+
+model TagRelation {
+  id          String     @id @default(uuid())
+  tagId       String
+  tag         Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  entityType  EntityType
+  entityId    String
+  createdById String
+  createdBy   User       @relation("TagRelationCreator", fields: [createdById], references: [id])
+  createdAt   DateTime   @default(now())
+
+  @@unique([tagId, entityType, entityId])
+  @@index([entityType, entityId])
+  @@map("tag_relations")
+}
+
+model Note {
+  id         String     @id @default(uuid())
+  entityType EntityType
+  entityId   String
+  content    String     @db.Text
+  authorId   String
+  author     User       @relation("NoteAuthor", fields: [authorId], references: [id])
+  isPinned   Boolean    @default(false)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  @@index([entityType, entityId])
+  @@map("notes")
+}
+
+model Bookmark {
+  id         String     @id @default(uuid())
+  entityType EntityType
+  entityId   String
+  userId     String
+  user       User       @relation("UserBookmarks", fields: [userId], references: [id], onDelete: Cascade)
+  note       String?    @db.Text
+  createdAt  DateTime   @default(now())
+
+  @@unique([userId, entityType, entityId])
+  @@index([userId])
+  @@map("bookmarks")
+}
+
+model SuspiciousEvent {
+  id              String   @id @default(uuid())
+  caseId          String
+  case            Case     @relation("CaseSuspiciousEvents", fields: [caseId], references: [id], onDelete: Cascade)
+  title           String
+  description     String   @db.Text
+  severity        String   @default("MEDIUM") // LOW, MEDIUM, HIGH, CRITICAL
+  relatedEventIds String[] // Array of TimelineEvent IDs
+  createdAt       DateTime @default(now())
+
+  @@index([caseId])
+  @@index([severity])
+  @@map("suspicious_events")
+}
+
+// ─────────────────────────────────────────────
+// TIMELINE CLUSTER
+// ─────────────────────────────────────────────
+
+model TimelineCluster {
+  id         String   @id @default(uuid())
+  caseId     String
+  case       Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  startTime  DateTime
+  endTime    DateTime
+  eventCount Int      @default(0)
+  severity   String   @default("LOW") // LOW, MEDIUM, HIGH, CRITICAL
+  eventTypes String[] @default([]) // Types of events in cluster
+  createdAt  DateTime @default(now())
+
+  @@index([caseId])
+  @@index([severity])
+  @@map("timeline_clusters")
+}

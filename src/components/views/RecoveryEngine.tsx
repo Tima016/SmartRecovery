@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
     Filter,
     Search,
@@ -6,23 +6,23 @@ import {
     ChevronUp,
     ChevronDown,
     Activity,
+    Loader2,
 } from 'lucide-react';
+import { useParams } from 'react-router-dom';
 import { BarChart, Bar, ResponsiveContainer, Tooltip, Cell } from 'recharts';
+import { recoveryApi } from '../../api/recovery.api';
 
-const files = [
-    { name: 'credentials.xlsx', path: '/Users/john.doe/Documents/', size: '48 KB', type: 'xlsx', status: 'RECOVERED', prob: 97, entropy: 6.2, deleted: '2024-11-12 09:14' },
-    { name: 'private_key.pem', path: '/Users/john.doe/.ssh/', size: '3.2 KB', type: 'pem', status: 'RECOVERED', prob: 99, entropy: 7.9, deleted: '2024-11-12 09:12' },
-    { name: 'screenshot_0443.png', path: '/Users/john.doe/Pictures/', size: '1.2 MB', type: 'png', status: 'PARTIAL', prob: 72, entropy: 5.1, deleted: '2024-11-10 22:31' },
-    { name: 'chat_log_export.json', path: '/AppData/Local/Slack/', size: '218 KB', type: 'json', status: 'RECOVERED', prob: 95, entropy: 4.3, deleted: '2024-11-09 16:44' },
-    { name: 'database_dump.sql', path: '/Users/john.doe/Downloads/', size: '88 MB', type: 'sql', status: 'RECOVERED', prob: 88, entropy: 3.8, deleted: '2024-11-08 11:02' },
-    { name: 'passwd.shadow', path: '/etc/', size: '1.4 KB', type: 'shadow', status: 'OVERWRITTEN', prob: 14, entropy: 7.1, deleted: '2024-11-07 07:30' },
-    { name: 'financial_q3.pdf', path: '/Users/john.doe/Desktop/', size: '4.1 MB', type: 'pdf', status: 'RECOVERED', prob: 93, entropy: 5.9, deleted: '2024-11-06 18:00' },
-    { name: 'keylog_output.txt', path: '/tmp/', size: '12 KB', type: 'txt', status: 'PARTIAL', prob: 61, entropy: 4.7, deleted: '2024-11-05 03:11' },
-    { name: 'vpn_config.ovpn', path: '/etc/openvpn/', size: '8 KB', type: 'ovpn', status: 'RECOVERED', prob: 91, entropy: 3.2, deleted: '2024-11-04 00:00' },
-    { name: 'deleted_emails.mbox', path: '/var/mail/', size: '22 MB', type: 'mbox', status: 'PARTIAL', prob: 55, entropy: 4.8, deleted: '2024-11-03 17:54' },
-];
-
-const entropyData = files.map((f, i) => ({ name: f.name.split('.')[0].slice(0, 6), entropy: f.entropy, i }));
+// ─── Types ────────────────────────────────────────────────────────────
+interface RecoveredFile {
+    name: string;
+    path: string;
+    size: string;
+    type: string;
+    status: string;
+    prob: number;
+    entropy: number;
+    deleted: string;
+}
 
 const probColor = (p: number) => p >= 90 ? '#00C896' : p >= 60 ? '#D97706' : '#C0392B';
 const statusColor: Record<string, string> = {
@@ -34,10 +34,50 @@ const statusColor: Record<string, string> = {
 type SortKey = 'name' | 'size' | 'prob';
 
 export default function RecoveryEngine() {
+    const { caseId } = useParams<{ caseId: string }>();
+    const [files, setFiles] = useState<RecoveredFile[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
     const [search, setSearch] = useState('');
     const [sortKey, setSortKey] = useState<SortKey>('prob');
     const [sortDesc, setSortDesc] = useState(true);
     const [scanMode, setScanMode] = useState<'metadata' | 'deep'>('deep');
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const fetchRecovery = async () => {
+            if (!caseId) {
+                // No case selected — load empty state
+                setLoading(false);
+                return;
+            }
+
+            try {
+                const data = await recoveryApi.getFiles(caseId);
+                if (cancelled) return;
+                const list = Array.isArray(data) ? data : (data?.data ?? []);
+                const mapped: RecoveredFile[] = list.map((f: any) => ({
+                    name: f.name ?? f.filename ?? 'unknown',
+                    path: f.path ?? f.filePath ?? '/',
+                    size: f.size ?? f.fileSize ?? '—',
+                    type: f.type ?? f.extension ?? (f.name?.split('.').pop() ?? ''),
+                    status: (f.status ?? 'RECOVERED').toUpperCase(),
+                    prob: f.probability ?? f.prob ?? f.confidence ?? 0,
+                    entropy: f.entropy ?? 0,
+                    deleted: f.deletedAt ?? f.deleted ?? '—',
+                }));
+                setFiles(mapped);
+            } catch (err: unknown) {
+                if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load recovery data');
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        };
+
+        fetchRecovery();
+        return () => { cancelled = true; };
+    }, [caseId]);
 
     const sorted = [...files]
         .filter(f => f.name.toLowerCase().includes(search.toLowerCase()) || f.path.toLowerCase().includes(search.toLowerCase()))
@@ -47,6 +87,8 @@ export default function RecoveryEngine() {
             return sortDesc ? (bv > av ? 1 : -1) : (av > bv ? 1 : -1);
         });
 
+    const entropyData = files.map((f, i) => ({ name: f.name.split('.')[0].slice(0, 6), entropy: f.entropy, i }));
+
     const toggle = (k: SortKey) => {
         if (sortKey === k) setSortDesc(d => !d);
         else { setSortKey(k); setSortDesc(true); }
@@ -55,6 +97,22 @@ export default function RecoveryEngine() {
     const SortIcon = ({ k }: { k: SortKey }) => sortKey === k
         ? (sortDesc ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />)
         : null;
+
+    if (loading) {
+        return (
+            <div className="h-full flex items-center justify-center">
+                <Loader2 className="w-6 h-6 text-accent-cyan animate-spin" />
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="h-full flex items-center justify-center text-status-error text-sm mono">
+                {error}
+            </div>
+        );
+    }
 
     return (
         <div className="h-full overflow-y-auto p-4 space-y-4">
@@ -126,12 +184,12 @@ export default function RecoveryEngine() {
                         <span>Deleted</span>
                     </div>
                     <div className="divide-y divide-bg-border/30 max-h-[340px] overflow-y-auto">
-                        {sorted.map((f, i) => (
+                        {sorted.length > 0 ? sorted.map((f, i) => (
                             <div key={i} className="grid grid-cols-[2fr_2fr_0.6fr_0.8fr_0.9fr_0.7fr] gap-2 px-4 py-2 table-row-hover items-center">
                                 <span className="text-text-primary text-[11px] mono font-medium truncate">{f.name}</span>
                                 <span className="text-text-muted text-[10px] mono truncate">{f.path}</span>
                                 <span className="text-text-secondary text-[10px] mono">{f.size}</span>
-                                <span className={`tag border text-[9px] self-center ${statusColor[f.status]}`}>{f.status}</span>
+                                <span className={`tag border text-[9px] self-center ${statusColor[f.status] ?? statusColor.PARTIAL}`}>{f.status}</span>
                                 <div className="flex items-center gap-2">
                                     <div className="flex-1 h-1 bg-bg-elevated rounded-full overflow-hidden">
                                         <div
@@ -143,7 +201,9 @@ export default function RecoveryEngine() {
                                 </div>
                                 <span className="text-text-muted text-[9px] mono">{f.deleted.split(' ')[0]}</span>
                             </div>
-                        ))}
+                        )) : (
+                            <div className="px-4 py-6 text-center text-text-muted text-xs mono">No recovered files found</div>
+                        )}
                     </div>
                 </div>
 
@@ -153,21 +213,27 @@ export default function RecoveryEngine() {
                         <Activity className="w-3.5 h-3.5 text-accent-cyan" />
                         <span className="text-text-primary text-xs font-semibold">Entropy Profile</span>
                     </div>
-                    <ResponsiveContainer width="100%" height={220}>
-                        <BarChart data={entropyData} layout="vertical" margin={{ left: 0, right: 8 }}>
-                            <Tooltip
-                                contentStyle={{ background: '#1D2128', border: '1px solid #23262E', fontSize: 10, fontFamily: 'JetBrains Mono', color: '#E6E8EB', borderRadius: 2 }}
-                            />
-                            <Bar dataKey="entropy" radius={1} maxBarSize={12}>
-                                {entropyData.map((d) => (
-                                    <Cell
-                                        key={d.i}
-                                        fill={d.entropy >= 7 ? '#C0392B' : d.entropy >= 5.5 ? '#D97706' : '#00C896'}
-                                    />
-                                ))}
-                            </Bar>
-                        </BarChart>
-                    </ResponsiveContainer>
+                    {entropyData.length > 0 ? (
+                        <ResponsiveContainer width="100%" height={220}>
+                            <BarChart data={entropyData} layout="vertical" margin={{ left: 0, right: 8 }}>
+                                <Tooltip
+                                    contentStyle={{ background: '#1D2128', border: '1px solid #23262E', fontSize: 10, fontFamily: 'JetBrains Mono', color: '#E6E8EB', borderRadius: 2 }}
+                                />
+                                <Bar dataKey="entropy" radius={1} maxBarSize={12}>
+                                    {entropyData.map((d) => (
+                                        <Cell
+                                            key={d.i}
+                                            fill={d.entropy >= 7 ? '#C0392B' : d.entropy >= 5.5 ? '#D97706' : '#00C896'}
+                                        />
+                                    ))}
+                                </Bar>
+                            </BarChart>
+                        </ResponsiveContainer>
+                    ) : (
+                        <div className="flex-1 flex items-center justify-center text-text-muted text-xs mono">
+                            No entropy data
+                        </div>
+                    )}
                     <div className="mt-2 space-y-1 text-[9px] mono">
                         <div className="flex items-center gap-1.5"><span className="inline-block w-2 h-2 bg-status-error rounded-sm" /> High (&gt;7)</div>
                         <div className="flex items-center gap-1.5"><span className="inline-block w-2 h-2 bg-status-warn rounded-sm" /> Medium (5.5–7)</div>

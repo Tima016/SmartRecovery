@@ -12,6 +12,7 @@ export const translations: Record<Lang, Record<string, string>> = {
         "nav.reports": "Reports",
         "nav.settings": "Settings",
         "nav.admin": "Admin Panel",
+        "nav.workspace": "Workspace",
 
         "topbar.case": "CASE",
         "topbar.scan": "SCAN",
@@ -131,6 +132,7 @@ export const translations: Record<Lang, Record<string, string>> = {
         "nav.reports": "Hisobotlar",
         "nav.settings": "Sozlamalar",
         "nav.admin": "Admin paneli",
+        "nav.workspace": "Ish maydoni",
 
         "topbar.case": "ISH",
         "topbar.scan": "SKAN",

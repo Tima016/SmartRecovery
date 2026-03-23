@@ -1,24 +1,32 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
     Plus,
     Search,
     Filter,
-    Tag,
-    Calendar,
-    User,
-    Hash,
-    Shield,
     MoreHorizontal,
+    Loader2,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { casesApi } from '../../api/cases.api';
+import { Skeleton } from '../ui/Skeleton';
 
-const cases = [
-    { id: 'INV-2024-0892', name: 'Insider Threat — FinCorp', investigator: 'S. Roper', date: '2024-11-14', status: 'ACTIVE', priority: 'HIGH', tags: ['insider', 'financial', 'exfil'], hash: 'a3f2...9d1e', files: 47823 },
-    { id: 'INV-2024-0889', name: 'Ransomware Recovery — MedSys', investigator: 'J. Park', date: '2024-11-10', status: 'ACTIVE', priority: 'CRITICAL', tags: ['ransomware', 'medical'], hash: 'b1e9...4c7a', files: 128410 },
-    { id: 'INV-2024-0881', name: 'Data Breach — RetailCo', investigator: 'M. Chen', date: '2024-11-02', status: 'REVIEW', priority: 'MEDIUM', tags: ['breach', 'pii', 'retail'], hash: 'c9d1...7f3b', files: 9234 },
-    { id: 'INV-2024-0874', name: 'IP Theft — TechStart', investigator: 'S. Roper', date: '2024-10-28', status: 'CLOSED', priority: 'LOW', tags: ['ip-theft', 'tech'], hash: 'd0a2...2e1c', files: 3401 },
-    { id: 'INV-2024-0866', name: 'Employee Misconduct — GovAgency', investigator: 'L. Torres', date: '2024-10-19', status: 'REVIEW', priority: 'MEDIUM', tags: ['misconduct', 'government'], hash: 'e7b3...8d4f', files: 21003 },
-    { id: 'INV-2024-0855', name: 'Phishing Campaign — BankX', investigator: 'J. Park', date: '2024-10-07', status: 'CLOSED', priority: 'HIGH', tags: ['phishing', 'financial'], hash: 'f4c5...1a2b', files: 5890 },
-];
+// ─── Types ────────────────────────────────────────────────────────────
+interface Case {
+    id: string;
+    caseNumber?: string;
+    name?: string;
+    title?: string;
+    investigator?: string;
+    createdBy?: { firstName?: string; lastName?: string };
+    createdAt?: string;
+    date?: string;
+    status: string;
+    priority?: string;
+    tags?: string[];
+    hash?: string;
+    evidenceCount?: number;
+    files?: number;
+}
 
 const priorityColor: Record<string, string> = {
     CRITICAL: 'bg-red-500/15 text-red-400 border-red-500/30',
@@ -28,32 +36,133 @@ const priorityColor: Record<string, string> = {
 };
 
 const statusDot: Record<string, string> = {
-    ACTIVE: 'ok',
-    REVIEW: 'warn',
+    CREATED: 'info',
+    IMAGING: 'warn',
+    HASHING: 'warn',
+    SCANNING: 'warn',
+    ANALYZING: 'warn',
+    READY: 'ok',
+    ERROR: 'error',
     CLOSED: 'info',
+    ARCHIVED: 'info',
 };
 
 const statusText: Record<string, string> = {
-    ACTIVE: 'text-[#00C896]',
-    REVIEW: 'text-[#D97706]',
+    CREATED: 'text-[#3D7EBF]',
+    IMAGING: 'text-[#D97706]',
+    HASHING: 'text-[#D97706]',
+    SCANNING: 'text-[#D97706]',
+    ANALYZING: 'text-[#D97706]',
+    READY: 'text-[#00C896]',
+    ERROR: 'text-[#C0392B]',
     CLOSED: 'text-[#6B7280]',
+    ARCHIVED: 'text-[#6B7280]',
 };
 
 export default function Cases() {
-    const [selected, setSelected] = useState<string>('INV-2024-0892');
+    const navigate = useNavigate();
+    const [cases, setCases] = useState<Case[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
     const [search, setSearch] = useState('');
+    const [isCreating, setIsCreating] = useState(false);
 
-    const filtered = cases.filter(c =>
-        c.name.toLowerCase().includes(search.toLowerCase()) ||
-        c.id.toLowerCase().includes(search.toLowerCase())
-    );
+    useEffect(() => {
+        let cancelled = false;
 
-    const selectedCase = cases.find(c => c.id === selected);
+        const fetchCases = async () => {
+            try {
+                const data = await casesApi.getAll();
+                if (cancelled) return;
+                const list = Array.isArray(data) ? data : (data?.data ?? []);
+                setCases(list);
+            } catch (err: unknown) {
+                if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load cases');
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        };
+
+        fetchCases();
+        return () => { cancelled = true; };
+    }, []);
+
+    const getCaseDisplayId = (c: Case) => c.caseNumber ?? c.id;
+    const getCaseName = (c: Case) => c.name ?? c.title ?? 'Untitled Case';
+    const getCaseInvestigator = (c: Case) =>
+        c.investigator ?? (c.createdBy ? `${c.createdBy.firstName ?? ''} ${c.createdBy.lastName ?? ''}`.trim() : '—');
+    const getCasePriority = (c: Case) => (c.priority ?? 'MEDIUM').toUpperCase();
+    const getCaseStatus = (c: Case) => (c.status ?? 'OPEN').toUpperCase();
+
+    const filtered = cases.filter(c => {
+        const q = search.toLowerCase();
+        return getCaseName(c).toLowerCase().includes(q) || getCaseDisplayId(c).toLowerCase().includes(q);
+    });
+
+    const handleNewCase = async () => {
+        try {
+            setIsCreating(true);
+
+            const data = await casesApi.create({
+                title: 'New Investigation'
+            });
+
+            const newCaseId = data?.id ?? data?.data?.id;
+
+            if (!newCaseId) {
+                throw new Error('No ID returned');
+            }
+
+            navigate(`/cases/${newCaseId}`);
+
+        } catch (err: any) {
+            console.error(err?.response?.data || err);
+            alert(JSON.stringify(err?.response?.data || err.message));
+        } finally {
+            setIsCreating(false);
+        }
+    };
+
+    if (loading) {
+        return (
+            <div className="h-full flex flex-col items-center">
+                <div className="flex flex-col w-full max-w-5xl h-full border-r border-l border-bg-border bg-bg-primary">
+                    <div className="flex items-center gap-3 px-4 py-3 border-b border-bg-border flex-shrink-0">
+                        <Skeleton className="flex-1 h-8" />
+                        <Skeleton className="w-20 h-8" />
+                        <Skeleton className="w-24 h-8" />
+                    </div>
+                    <div className="grid gap-2 px-4 py-2 bg-bg-elevated border-b border-bg-border">
+                        <Skeleton className="h-4 w-full" />
+                    </div>
+                    <div className="flex-1 overflow-y-auto divide-y divide-bg-border/30">
+                        {Array.from({ length: 10 }).map((_, i) => (
+                            <div key={i} className="flex gap-4 px-4 py-3">
+                                <Skeleton className="w-1/4 h-5" />
+                                <Skeleton className="flex-1 h-5" />
+                                <Skeleton className="w-32 h-5" />
+                                <Skeleton className="w-20 h-5" />
+                                <Skeleton className="w-16 h-5" />
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="h-full flex items-center justify-center text-status-error text-sm mono">
+                {error}
+            </div>
+        );
+    }
 
     return (
-        <div className="h-full flex overflow-hidden">
-            {/* Left: Case Table */}
-            <div className="flex flex-col w-[55%] border-r border-bg-border">
+        <div className="h-full flex flex-col items-center">
+            {/* Full Width Case Table */}
+            <div className="flex flex-col w-full max-w-5xl h-full border-r border-l border-bg-border bg-bg-primary">
                 {/* Toolbar */}
                 <div className="flex items-center gap-3 px-4 py-3 border-b border-bg-border flex-shrink-0">
                     <div className="flex items-center gap-2 flex-1 bg-bg-elevated border border-bg-border rounded-sm px-3 py-1.5">
@@ -70,8 +179,12 @@ export default function Cases() {
                         <Filter className="w-3.5 h-3.5" />
                         Filter
                     </button>
-                    <button className="flex items-center gap-1.5 px-3 py-1.5 bg-accent-cyan/10 border border-accent-cyan/30 text-accent-cyan text-xs hover:bg-accent-cyan/20 transition-colors rounded-sm">
-                        <Plus className="w-3.5 h-3.5" />
+                    <button
+                        onClick={handleNewCase}
+                        disabled={isCreating}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-accent-cyan/10 border border-accent-cyan/30 text-accent-cyan text-xs hover:bg-accent-cyan/20 transition-colors rounded-sm disabled:opacity-50"
+                    >
+                        {isCreating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
                         New Case
                     </button>
                 </div>
@@ -89,97 +202,35 @@ export default function Cases() {
 
                 {/* Rows */}
                 <div className="flex-1 overflow-y-auto divide-y divide-bg-border/30">
-                    {filtered.map(c => (
-                        <div
-                            key={c.id}
-                            onClick={() => setSelected(c.id)}
-                            className={`grid gap-2 px-4 py-2.5 cursor-pointer transition-all items-center ${selected === c.id
-                                ? 'bg-accent-cyan/[0.08] border-l-2 border-[#00C896]'
-                                : 'table-row-hover border-l-2 border-transparent'
-                                }`}
-                            style={{ gridTemplateColumns: '1.2fr 2.2fr 1fr 0.8fr 0.7fr 32px' }}
-                        >
-                            <span className="text-accent-cyan text-[11px] mono font-medium truncate">{c.id}</span>
-                            <span className="text-text-primary text-xs truncate">{c.name}</span>
-                            <span className="text-text-secondary text-xs truncate">{c.investigator}</span>
-                            <div className="flex items-center gap-1.5">
-                                <span className={`status-dot ${statusDot[c.status]}`} />
-                                <span className={`text-[10px] mono ${statusText[c.status]}`}>{c.status}</span>
+                    {filtered.length > 0 ? filtered.map(c => {
+                        const status = getCaseStatus(c);
+                        const priority = getCasePriority(c);
+                        return (
+                            <div
+                                key={c.id}
+                                onClick={() => navigate(`/cases/${c.id}`)}
+                                className="grid gap-2 px-4 py-2.5 cursor-pointer transition-all items-center table-row-hover border-l-2 border-transparent hover:border-accent-cyan"
+                                style={{ gridTemplateColumns: '1.2fr 2.2fr 1fr 0.8fr 0.7fr 32px' }}
+                            >
+                                <span className="text-accent-cyan text-[11px] mono font-medium truncate">{getCaseDisplayId(c)}</span>
+                                <span className="text-text-primary text-xs truncate">{getCaseName(c)}</span>
+                                <span className="text-text-secondary text-xs truncate">{getCaseInvestigator(c)}</span>
+                                <div className="flex items-center gap-1.5">
+                                    <span className={`status-dot ${statusDot[status] ?? 'info'}`} />
+                                    <span className={`text-[10px] mono ${statusText[status] ?? 'text-text-muted'}`}>{status}</span>
+                                </div>
+                                <span className={`tag border text-[9px] self-start ${priorityColor[priority] ?? priorityColor.MEDIUM}`}>{priority}</span>
+                                <button className="text-text-muted hover:text-text-secondary">
+                                    <MoreHorizontal className="w-3.5 h-3.5" />
+                                </button>
                             </div>
-                            <span className={`tag border text-[9px] self-start ${priorityColor[c.priority]}`}>{c.priority}</span>
-                            <button className="text-text-muted hover:text-text-secondary">
-                                <MoreHorizontal className="w-3.5 h-3.5" />
-                            </button>
+                        );
+                    }) : (
+                        <div className="px-4 py-8 text-center text-text-muted text-xs mono">
+                            {search ? 'No cases match your search' : 'No cases found'}
                         </div>
-                    ))}
+                    )}
                 </div>
-            </div>
-
-            {/* Right: Case Detail */}
-            <div className="flex-1 overflow-y-auto p-4">
-                {selectedCase ? (
-                    <div className="space-y-4">
-                        <div className="flex items-start justify-between">
-                            <div>
-                                <div className="flex items-center gap-2 mb-1">
-                                    <Shield className="w-4 h-4 text-accent-cyan" />
-                                    <span className="text-accent-cyan mono text-sm font-bold">{selectedCase.id}</span>
-                                </div>
-                                <h2 className="text-text-primary font-semibold text-base">{selectedCase.name}</h2>
-                            </div>
-                            <span className={`tag border ${priorityColor[selectedCase.priority]} px-2 py-1 text-[10px]`}>
-                                {selectedCase.priority}
-                            </span>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                            {[
-                                { icon: User, label: 'Investigator', value: selectedCase.investigator },
-                                { icon: Calendar, label: 'Created', value: selectedCase.date },
-                                { icon: Hash, label: 'Hash (SHA-256)', value: selectedCase.hash },
-                                { icon: Shield, label: 'Status', value: selectedCase.status },
-                            ].map(({ icon: Icon, label, value }) => (
-                                <div key={label} className="glass-panel rounded-sm p-3">
-                                    <div className="flex items-center gap-1.5 mb-1">
-                                        <Icon className="w-3 h-3 text-text-muted" />
-                                        <span className="text-text-muted text-[10px] mono">{label}</span>
-                                    </div>
-                                    <span className="text-text-primary text-xs mono">{value}</span>
-                                </div>
-                            ))}
-                        </div>
-
-                        {/* Tags */}
-                        <div className="glass-panel rounded-sm p-3">
-                            <div className="flex items-center gap-1.5 mb-2">
-                                <Tag className="w-3 h-3 text-text-muted" />
-                                <span className="text-text-muted text-[10px] mono">TAGS</span>
-                            </div>
-                            <div className="flex flex-wrap gap-1.5">
-                                {selectedCase.tags.map(tag => (
-                                    <span key={tag} className="tag bg-bg-elevated border border-bg-border text-text-secondary text-[10px]">
-                                        {tag}
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Files count */}
-                        <div className="glass-panel rounded-sm p-3">
-                            <div className="flex justify-between items-center mb-2">
-                                <span className="text-text-muted text-[10px] mono">INDEXED FILES</span>
-                                <span className="text-accent-cyan mono font-bold">{selectedCase.files.toLocaleString()}</span>
-                            </div>
-                            <div className="progress-bar h-1.5">
-                                <div style={{ width: `${Math.min(100, (selectedCase.files / 130000) * 100)}%` }} />
-                            </div>
-                        </div>
-                    </div>
-                ) : (
-                    <div className="flex items-center justify-center h-full text-text-muted text-sm">
-                        Select a case to view details
-                    </div>
-                )}
             </div>
         </div>
     );

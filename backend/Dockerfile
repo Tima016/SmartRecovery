@@ -1,43 +1,41 @@
-# ═══════════════════════════════════════════════════════════
-# IDFR Platform — Backend Dockerfile
-# Node 20 Alpine + Express (production)
-# ═══════════════════════════════════════════════════════════
-
-# ── Stage 1: Build ─────────────────────────────────────────
-FROM node:20-alpine AS builder
+# ─── Stage 1: Build ─────────────────────────────
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
-RUN npm ci --silent
+COPY package*.json ./
+COPY prisma ./prisma/
+
+RUN apt-get update && apt-get install -y openssl build-essential python3
+
+RUN npm install --legacy-peer-deps
 
 COPY . .
+
+RUN npx prisma generate
 RUN npm run build
 
-# Verify compiled output exists
-RUN test -d dist || (echo "ERROR: dist/ not found after tsc build" && exit 1)
 
-# ── Stage 2: Production runner ─────────────────────────────
-FROM node:20-alpine AS runner
+# ─── Stage 2: Production ─────────────────────────
+FROM node:20-slim
 
-# Never run as root
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+RUN apt-get update && apt-get install -y openssl wget
+
+RUN addgroup --system dfip && adduser --system --ingroup dfip dfip
 
 WORKDIR /app
 
-# Copy only what's needed at runtime
-COPY --from=builder --chown=appuser:appgroup /app/package.json  ./package.json
-COPY --from=builder --chown=appuser:appgroup /app/node_modules  ./node_modules
-COPY --from=builder --chown=appuser:appgroup /app/dist          ./dist
-
-USER appuser
-
 ENV NODE_ENV=production
-ENV PORT=5000
+
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/prisma ./prisma
+COPY package*.json ./
+
+RUN mkdir -p /tmp/dfip-uploads && chown -R dfip:dfip /app /tmp/dfip-uploads
+
+USER dfip
 
 EXPOSE 5000
 
-HEALTHCHECK --interval=15s --timeout=5s --start-period=15s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:5000/health || exit 1
-
-CMD ["node", "dist/index.js"]
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main.js"]

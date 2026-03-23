@@ -1,221 +1,353 @@
 import { useNavigate, Link } from 'react-router-dom';
-import { Shield, Lock, Search, Clock, FileText, Database, ChevronRight, Cpu, Globe, Users } from 'lucide-react';
-import { useTranslation } from '../i18n/useTranslation';
+import { motion, useScroll, useTransform, useSpring } from 'framer-motion';
+import {
+    Shield, Search, Activity, Network, FileText, Database, ArrowRight, Combine, Lock, Terminal, ShieldCheck
+} from 'lucide-react';
+import { useRef } from 'react';
 
-const features = [
-    { icon: Database, key: 'acq' },
-    { icon: Search, key: 'rec' },
-    { icon: FileText, key: 'art' },
-    { icon: Clock, key: 'time' },
-    { icon: Shield, key: 'rep' },
-];
+/* 
+ * ----------------------------------------------------------------------------
+ * HELPER: AMBIENT GLOW
+ * ----------------------------------------------------------------------------
+ */
+const AmbientGlow = ({ color = 'rgba(0, 200, 150, 0.15)', top = '50%', left = '50%', right, size = '800px', blur = '150px' }: { color?: string, top?: string, left?: string, right?: string, size?: string, blur?: string }) => (
+    <div
+        className="absolute pointer-events-none"
+        style={{
+            top, left, right,
+            width: size, height: size,
+            borderRadius: '50%',
+            transform: left ? 'translate(-50%, -50%)' : 'translate(50%, -50%)',
+            background: `radial-gradient(circle, ${color} 0%, transparent 70%)`,
+            filter: `blur(${blur})`,
+            zIndex: 0
+        }}
+    />
+);
 
-const securityPoints = [
-    { label: 'Write-blocker enforcement on all acquisition operations' },
-    { label: 'SHA-256 / MD5 / SHA-512 cryptographic hash verification' },
-    { label: 'Tamper-evident audit trail on every investigator action' },
-    { label: 'Role-based access — investigators cannot modify system config' },
-    { label: 'Encrypted session tokens with automatic expiry' },
-    { label: 'Chain of custody enforced from acquisition to final report' },
-];
-
-export default function LandingPage() {
-    const navigate = useNavigate();
-    const { t } = useTranslation();
+/* 
+ * ----------------------------------------------------------------------------
+ * COMPONENT: ANIMATED TIMELINE PREVIEW
+ * ----------------------------------------------------------------------------
+ */
+const AnimatedTimelinePreview = () => {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const { scrollYProgress } = useScroll({ target: containerRef, offset: ["start end", "end center"] });
+    
+    // Smooth the scroll progress for natural feeling UI growth
+    const smoothProgress = useSpring(scrollYProgress, { stiffness: 40, damping: 15 });
+    const lineWidth = useTransform(smoothProgress, [0.3, 0.8], ["0%", "100%"]);
+    const node1Opacity = useTransform(smoothProgress, [0.3, 0.4], [0, 1]);
+    const node2Opacity = useTransform(smoothProgress, [0.5, 0.6], [0, 1]);
+    const node3Opacity = useTransform(smoothProgress, [0.7, 0.8], [0, 1]);
 
     return (
-        <div className="min-h-screen text-text-primary overflow-x-hidden" style={{ background: 'var(--bg-primary)' }}>
-            {/* Top nav */}
-            <nav className="fixed top-0 left-0 right-0 z-50 h-16 flex items-center justify-between px-8 border-b backdrop-blur-md" style={{ background: 'color-mix(in srgb, var(--bg-panel) 85%, transparent)', borderColor: 'var(--border)' }}>
-                <div className="flex items-center gap-2.5">
-                    <div className="w-7 h-7 rounded-sm bg-accent-cyan/20 border border-accent-cyan/40 flex items-center justify-center">
-                        <Shield className="w-4 h-4 text-accent-cyan" />
-                    </div>
-                    <span className="font-bold text-sm tracking-widest text-text-primary mono">IDFR</span>
-                    <span className="text-[10px] text-text-muted mono ml-1 tracking-widest">PLATFORM</span>
+        <div ref={containerRef} className="w-full max-w-4xl mx-auto mt-20 p-8 sm:p-12 rounded-2xl bg-[#0A0C10]/80 border border-white/[0.05] backdrop-blur-2xl shadow-[0_40px_80px_rgba(0,0,0,0.5)] relative overflow-hidden">
+            <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.03] mix-blend-overlay" />
+            
+            <div className="flex justify-between items-center mb-12 relative z-10">
+                <div className="flex gap-3">
+                    <div className="w-3 h-3 rounded-full bg-white/20" />
+                    <div className="w-3 h-3 rounded-full bg-white/20" />
+                    <div className="w-3 h-3 rounded-full bg-white/20" />
                 </div>
-                <div className="flex items-center gap-3">
-                    <Link
-                        to="/login"
-                        className="px-4 py-2 text-xs text-text-secondary hover:text-text-primary transition-colors mono tracking-wide"
-                    >
-                        {t('landing.cta_login')}
+                <div className="text-[11px] font-mono text-[#6B7280] tracking-widest uppercase border border-white/10 px-3 py-1 rounded bg-white/[0.02]">Korrelyatsiya Tizimi</div>
+            </div>
+
+            <div className="relative py-12 px-4 z-10">
+                {/* Background Base Line */}
+                <div className="absolute top-1/2 left-4 right-4 h-1 bg-white/[0.05] -translate-y-1/2 rounded-full" />
+                
+                {/* Animated Growing Line */}
+                <motion.div 
+                    style={{ width: lineWidth }}
+                    className="absolute top-1/2 left-4 h-1 bg-gradient-to-r from-[#00C896]/20 via-[#00C896] to-[#00C896] shadow-[0_0_15px_#00C896] -translate-y-1/2 rounded-full origin-left"
+                />
+
+                {/* Nodes */}
+                <div className="relative flex justify-between items-center w-full">
+                    {/* Node 1 */}
+                    <motion.div style={{ opacity: node1Opacity }} className="relative flex flex-col items-center gap-4">
+                        <div className="w-4 h-4 rounded-full bg-[#00C896] shadow-[0_0_20px_#00C896] border-2 border-[#0A0C10] relative z-10" />
+                        <div className="absolute top-8 w-[1px] h-12 bg-gradient-to-b from-[#00C896]/50 to-transparent" />
+                        <div className="absolute top-20 text-[12px] text-white font-medium bg-white/[0.05] px-3 py-1.5 rounded-lg border border-white/[0.1] whitespace-nowrap">Dastlabki kirish</div>
+                    </motion.div>
+
+                    {/* Node 2 */}
+                    <motion.div style={{ opacity: node2Opacity }} className="relative flex flex-col items-center gap-4">
+                        <div className="w-4 h-4 rounded-full bg-[#3B82F6] shadow-[0_0_20px_#3B82F6] border-2 border-[#0A0C10] relative z-10" />
+                        <div className="absolute bottom-8 w-[1px] h-12 bg-gradient-to-t from-[#3B82F6]/50 to-transparent" />
+                        <div className="absolute bottom-20 text-[12px] text-white font-medium bg-[#3B82F6]/10 px-3 py-1.5 rounded-lg border border-[#3B82F6]/30 whitespace-nowrap">Fayl modifikatsiyasi</div>
+                    </motion.div>
+
+                    {/* Node 3 */}
+                    <motion.div style={{ opacity: node3Opacity }} className="relative flex flex-col items-center gap-4">
+                        <div className="w-5 h-5 rounded-full bg-[#A855F7] shadow-[0_0_30px_#A855F7] border-2 border-[#0A0C10] relative z-10 animate-pulse" />
+                        <div className="absolute top-8 w-[1px] h-12 bg-gradient-to-b from-[#A855F7]/50 to-transparent" />
+                        <div className="absolute top-20 text-[12px] text-white font-medium bg-[#A855F7]/10 px-3 py-1.5 rounded-lg border border-[#A855F7]/30 whitespace-nowrap">Tarmoq anomaliyasi</div>
+                    </motion.div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+/* 
+ * ----------------------------------------------------------------------------
+ * MAIN PAGE COMPONENT
+ * ----------------------------------------------------------------------------
+ */
+export default function LandingPage() {
+    const navigate = useNavigate();
+    const heroRef = useRef<HTMLElement>(null);
+    const { scrollYProgress: heroScroll } = useScroll({ target: heroRef, offset: ["start start", "end start"] });
+
+    // Parallax Transforms for Hero
+    const yHeroText = useTransform(heroScroll, [0, 1], [0, 200]);
+    const opacityHero = useTransform(heroScroll, [0, 0.8], [1, 0]);
+    const yFloatingLeft = useTransform(heroScroll, [0, 1], [0, -100]);
+    const yFloatingRight = useTransform(heroScroll, [0, 1], [0, -250]);
+
+    return (
+        <div className="min-h-screen text-[#E6E8EB] bg-[#030303] font-sans selection:bg-[#00C896]/30 selection:text-white overflow-hidden relative">
+
+            {/* --- GLOBAL CINEMATIC BACKGROUND --- */}
+            <div className="fixed inset-0 pointer-events-none z-0 bg-[#030303]" />
+            <div className="fixed inset-0 pointer-events-none z-0 opacity-[0.02]" style={{ backgroundImage: 'linear-gradient(rgba(255, 255, 255, 1) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 1) 1px, transparent 1px)', backgroundSize: '60px 60px' }} />
+            
+            {/* --- NAVIGATION --- */}
+            <motion.nav 
+                initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ duration: 0.8 }}
+                className="fixed top-0 left-0 right-0 z-50 h-[72px] flex items-center justify-between px-6 sm:px-12 border-b border-white/[0.04] bg-[#030303]/50 backdrop-blur-2xl"
+            >
+                <div className="flex items-center gap-3 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+                    <div className="w-8 h-8 flex items-center justify-center relative group">
+                        <div className="absolute inset-0 bg-[#00C896]/20 blur-md rounded-full group-hover:bg-[#00C896]/40 transition-colors duration-500" />
+                        <Shield className="w-5 h-5 text-[#00C896] relative z-10" />
+                    </div>
+                    <span className="font-semibold text-[16px] tracking-wide text-white">SmartRecovery</span>
+                </div>
+                <div className="flex items-center gap-6">
+                    <Link to="/login" className="text-[13px] font-medium text-[#9CA3AF] hover:text-white transition-colors">
+                        Kirish
                     </Link>
                     <button
                         onClick={() => navigate('/register')}
-                        className="px-4 py-2 text-xs bg-accent-cyan/10 border border-accent-cyan/30 text-accent-cyan hover:bg-accent-cyan/20 transition-all rounded-sm mono tracking-wide"
+                        className="px-5 py-2.5 text-[13px] font-medium bg-white text-black rounded hover:bg-[#E5E5E5] transition-colors"
                     >
-                        {t('landing.cta_request')}
+                        Tizimga ulanish
                     </button>
                 </div>
-            </nav>
+            </motion.nav>
 
-            {/* Hero */}
-            <section className="relative pt-36 pb-28 px-8 flex flex-col items-center text-center">
-                {/* Grid overlay */}
-                <div className="absolute inset-0 grid-bg opacity-40 pointer-events-none" />
-                {/* Glow */}
-                <div className="absolute top-24 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-accent-cyan/5 blur-[100px] rounded-full pointer-events-none" />
+            {/* --- 1. HERO SECTION (INTERACTIVE / PARALLAX) --- */}
+            <section ref={heroRef} className="relative min-h-screen flex items-center justify-center pt-20 px-6 sm:px-12 overflow-hidden border-b border-white/[0.02]">
+                <AmbientGlow color="rgba(0, 200, 150, 0.15)" top="20%" left="50%" size="1000px" blur="200px" />
+                
+                {/* Parallax Floating Elements */}
+                <motion.div style={{ y: yFloatingLeft, opacity: opacityHero }} className="absolute left-[10%] top-[40%] hidden xl:flex flex-col gap-4 pointer-events-none">
+                    <motion.div animate={{ y: [0, -15, 0] }} transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }} className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] backdrop-blur-md flex items-center gap-4">
+                        <Database className="w-5 h-5 text-[#3B82F6]" />
+                        <div>
+                            <div className="text-[10px] text-[#6B7280] font-mono">Klaster holati</div>
+                            <div className="text-[14px] text-white font-medium">Sinxron qilinmoqda</div>
+                        </div>
+                    </motion.div>
+                </motion.div>
 
-                <div className="relative z-10 max-w-4xl mx-auto">
-                    <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-accent-cyan/10 border border-accent-cyan/20 rounded-full mb-6">
-                        <span className="status-dot ok" />
-                        <span className="text-accent-cyan mono text-[10px] tracking-widest">{t('landing.hero_tag')}</span>
-                    </div>
+                <motion.div style={{ y: yFloatingRight, opacity: opacityHero }} className="absolute right-[10%] top-[60%] hidden xl:flex flex-col gap-4 pointer-events-none">
+                    <motion.div animate={{ y: [0, 20, 0] }} transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }} className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] backdrop-blur-md flex items-center gap-4">
+                        <Terminal className="w-5 h-5 text-[#A855F7]" />
+                        <div>
+                            <div className="text-[10px] text-[#6B7280] font-mono">Tahlil jarayoni</div>
+                            <div className="text-[14px] text-white font-medium">Faol</div>
+                        </div>
+                    </motion.div>
+                </motion.div>
 
-                    <h1 className="text-5xl font-bold tracking-tight leading-tight text-text-primary mb-6 whitespace-pre-line">
-                        {t('landing.hero_title')}
-                    </h1>
+                {/* Center Content */}
+                <motion.div style={{ y: yHeroText, opacity: opacityHero }} className="relative z-10 w-full max-w-4xl mx-auto flex flex-col items-center text-center">
+                    
+                    <motion.div 
+                        initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 1, delay: 0.2 }}
+                        className="inline-flex items-center gap-2 px-4 py-1.5 bg-[#00C896]/[0.05] border border-[#00C896]/20 rounded-full mb-8 backdrop-blur-md"
+                    >
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#00C896] shadow-[0_0_10px_#00C896]" />
+                        <span className="text-[#00C896] text-[11px] font-medium tracking-wide border-r border-[#00C896]/20 pr-3 mr-1">SmartRecovery tizimi</span>
+                        <span className="text-white text-[11px] font-medium tracking-wide">Yangi avlod</span>
+                    </motion.div>
 
-                    <p className="text-text-secondary text-lg leading-relaxed max-w-2xl mx-auto mb-10">
-                        {t('landing.hero_sub')}
-                    </p>
+                    <motion.h1 
+                        initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 1, delay: 0.3 }}
+                        className="text-[56px] sm:text-[72px] lg:text-[88px] font-bold tracking-tight leading-[1.05] mb-8 text-white relative"
+                    >
+                        <span className="absolute inset-0 bg-white blur-[80px] opacity-10 rounded-full" />
+                        Raqamli haqiqatni <br/>
+                        <span className="text-transparent bg-clip-text bg-gradient-to-r from-white via-[#9CA3AF] to-[#4A5568]">
+                            qayta yig'ing.
+                        </span>
+                    </motion.h1>
 
-                    <div className="flex items-center gap-4 justify-center">
+                    <motion.p 
+                        initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 1, delay: 0.4 }}
+                        className="text-lg sm:text-[22px] text-[#9CA3AF] max-w-2xl leading-relaxed mb-12 font-light"
+                    >
+                        Keng ko'lamli ma'lumotlarni daqiqalar ichida skanerlang, xronologiyani quring va murakkab kiber-hodisalarni fosh eting.
+                    </motion.p>
+
+                    <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 1, delay: 0.5 }} className="flex flex-col sm:flex-row gap-5 w-full sm:w-auto">
                         <button
                             onClick={() => navigate('/login')}
-                            className="flex items-center gap-2 px-7 py-3.5 bg-accent-cyan text-[#0F1115] font-bold text-sm rounded-sm hover:bg-accent-cyan/90 transition-all mono tracking-wide shadow-[0_0_30px_rgba(0,200,150,0.25)]"
+                            className="group relative flex items-center justify-center gap-3 px-8 py-4 bg-white text-black font-semibold text-[15px] rounded-lg hover:scale-[1.02] active:scale-95 transition-all shadow-[0_0_30px_rgba(255,255,255,0.15)] w-full sm:w-auto overflow-hidden"
                         >
-                            <Lock className="w-4 h-4" />
-                            {t('landing.cta_login')}
+                            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-black/10 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
+                            Boshlash
+                            <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
                         </button>
                         <button
                             onClick={() => navigate('/register')}
-                            className="flex items-center gap-2 px-7 py-3.5 border border-bg-border text-text-secondary text-sm rounded-sm hover:border-accent-cyan/30 hover:text-text-primary transition-all mono tracking-wide"
+                            className="group flex items-center justify-center gap-2 px-8 py-4 bg-transparent border border-white/[0.15] text-white font-medium text-[15px] rounded-lg hover:bg-white/[0.05] hover:border-white/[0.3] transition-all w-full sm:w-auto"
                         >
-                            {t('landing.cta_request')}
-                            <ChevronRight className="w-4 h-4" />
+                            Demo ko‘rish
                         </button>
-                    </div>
+                    </motion.div>
+                </motion.div>
+            </section>
 
-                    {/* Metrics row */}
-                    <div className="mt-16 grid grid-cols-3 gap-6 max-w-lg mx-auto">
+            {/* --- 2. HOW IT WORKS (ANIMATED SEQUENCES) --- */}
+            <section className="py-40 px-6 sm:px-12 relative">
+                <AmbientGlow color="rgba(59, 130, 246, 0.05)" top="20%" left="80%" size="800px" blur="150px" />
+                <div className="max-w-7xl mx-auto">
+                    <motion.div initial={{ opacity: 0, y: 40 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-100px" }} transition={{ duration: 0.8 }} className="mb-24 text-center">
+                        <h2 className="text-[32px] sm:text-[48px] font-bold tracking-tight mb-6 text-white">Qanday Ishlaydi?</h2>
+                        <p className="text-[18px] text-[#9CA3AF] max-w-2xl mx-auto font-light">Tizim chuqur skanerlashdan boshlab natijaga qadar uzluksiz ketma-ketlikda ishlaydi.</p>
+                    </motion.div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-8 relative">
+                        {/* Connecting Line */}
+                        <div className="hidden md:block absolute top-[40px] left-[10%] right-[10%] h-[1px] bg-white/[0.05] z-0" />
+                        
                         {[
-                            { val: '256-bit', label: 'Encryption' },
-                            { val: '99.97%', label: 'Recovery Rate' },
-                            { val: 'NIST', label: 'Guidelines' },
-                        ].map(m => (
-                            <div key={m.label} className="glass-panel rounded-sm p-4 text-center">
-                                <div className="text-2xl font-bold text-accent-cyan mono mb-1">{m.val}</div>
-                                <div className="text-text-muted text-[10px] tracking-widest">{m.label}</div>
-                            </div>
+                            { step: '01', title: "Skanerlash", desc: "Manbadan barcha mavjud bitlarni chuqur o'qish.", icon: Search, color: "text-[#3B82F6]" },
+                            { step: '02', title: "Tiklash", desc: "Zararlangan yoki o'chirilgan bloklarni birlashtirish.", icon: Combine, color: "text-[#00C896]" },
+                            { step: '03', title: "Vaqt zanjiri", desc: "Korrelyatsion tahlil orqali vaqt o'qi barpo etiladi.", icon: Activity, color: "text-[#A855F7]" },
+                            { step: '04', title: "Natija", desc: "Murakkab aloqalar oddiy vizual grafikda namoyon bo'ladi.", icon: Network, color: "text-white" }
+                        ].map((item, idx) => (
+                            <motion.div 
+                                key={idx}
+                                initial={{ opacity: 0, y: 50 }} 
+                                whileInView={{ opacity: 1, y: 0 }} 
+                                viewport={{ once: true, margin: "-100px" }} 
+                                transition={{ duration: 0.8, delay: idx * 0.2 }}
+                                className="relative z-10 flex flex-col items-center text-center group"
+                            >
+                                {/* Animated Node */}
+                                <div className="w-20 h-20 rounded-full bg-[#050505] border border-white/[0.08] flex items-center justify-center mb-8 relative transition-transform duration-500 group-hover:scale-110">
+                                    <div className="absolute inset-0 rounded-full bg-white/[0.02] group-hover:bg-white/[0.05] transition-colors" />
+                                    <item.icon className={`w-8 h-8 ${item.color}`} />
+                                </div>
+                                
+                                <div className="text-[11px] font-mono text-[#6B7280] tracking-widest mb-3 uppercase">Qadam {item.step}</div>
+                                <h3 className="text-xl font-bold mb-3 text-white">{item.title}</h3>
+                                <p className="text-[15px] text-[#9CA3AF] leading-relaxed font-light">{item.desc}</p>
+                            </motion.div>
                         ))}
                     </div>
                 </div>
             </section>
 
-            {/* Features section */}
-            <section className="py-24 px-8 border-t border-white/5">
-                <div className="max-w-6xl mx-auto">
-                    <div className="text-center mb-14">
-                        <h2 className="text-3xl font-bold text-text-primary mb-3">{t('landing.features_title')}</h2>
-                        <p className="text-text-secondary">{t('landing.features_sub')}</p>
-                    </div>
-                    <div className="grid grid-cols-5 gap-4">
-                        {features.map(({ icon: Icon, key }) => (
-                            <div key={key} className="glass-panel rounded-sm p-5 group hover:border-accent-cyan/30 transition-all hover:shadow-[0_0_20px_rgba(0,200,150,0.08)]">
-                                <div className="w-10 h-10 rounded-sm bg-accent-cyan/10 border border-accent-cyan/20 flex items-center justify-center mb-4 group-hover:bg-accent-cyan/20 transition-colors">
-                                    <Icon className="w-5 h-5 text-accent-cyan" />
-                                </div>
-                                <h3 className="text-text-primary font-semibold text-sm mb-2">
-                                    {t(`landing.feat_${key}_title`)}
-                                </h3>
-                                <p className="text-text-muted text-xs leading-relaxed">
-                                    {t(`landing.feat_${key}_desc`)}
-                                </p>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </section>
+            {/* --- 3. PREMIUM FEATURES (DYNAMIC ICONS & GLOW) --- */}
+            <section className="py-40 px-6 sm:px-12 bg-[#0A0C10] border-y border-white/[0.02] relative overflow-hidden">
+                <AmbientGlow color="rgba(168, 85, 247, 0.08)" top="50%" left="50%" size="1000px" blur="200px" />
+                
+                <div className="max-w-7xl mx-auto relative z-10">
+                    <motion.div initial={{ opacity: 0, y: 40 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-100px" }} transition={{ duration: 0.8 }} className="mb-24">
+                        <h2 className="text-[32px] sm:text-[48px] font-bold tracking-tight mb-6 text-white">Yechimlar va Imkoniyatlar</h2>
+                        <p className="text-[18px] text-[#9CA3AF] max-w-2xl font-light">Tahlil jarayonini yengillashtiruvchi zamonaviy vositalar to'plami.</p>
+                    </motion.div>
 
-            {/* Security & Integrity */}
-            <section className="py-24 px-8 border-t border-white/5 bg-[#060810]">
-                <div className="max-w-6xl mx-auto grid grid-cols-2 gap-16 items-center">
-                    <div>
-                        <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded-full mb-6">
-                            <Lock className="w-3 h-3 text-text-muted" />
-                            <span className="text-text-muted mono text-[10px] tracking-widest">INTEGRITY</span>
-                        </div>
-                        <h2 className="text-3xl font-bold mb-4">{t('landing.security_title')}</h2>
-                        <p className="text-text-secondary mb-8 leading-relaxed">{t('landing.security_sub')}</p>
-                        <div className="space-y-3">
-                            {securityPoints.map(sp => (
-                                <div key={sp.label} className="flex items-start gap-3">
-                                    <div className="w-5 h-5 rounded-full bg-accent-cyan/10 border border-accent-cyan/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                                        <Shield className="w-3 h-3 text-accent-cyan" />
-                                    </div>
-                                    <span className="text-text-secondary text-sm">{sp.label}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                    {/* Right side: decorative terminal block */}
-                    <div className="glass-panel rounded-sm p-6 font-mono text-xs space-y-2">
-                        <div className="flex items-center gap-2 mb-4 pb-3 border-b border-bg-border">
-                            <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
-                            <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
-                            <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
-                            <span className="text-text-muted text-[10px] ml-2">audit_log.json</span>
-                        </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         {[
-                            { t: '2024-11-14 08:02:11', e: 'ACQUISITION_START', d: 'sdb — WB: ENGAGED' },
-                            { t: '2024-11-14 08:02:12', e: 'HASH_CALC_BEGIN', d: 'SHA-256 | MD5' },
-                            { t: '2024-11-14 09:41:05', e: 'ACQUISITION_COMPLETE', d: '500GB — 100%' },
-                            { t: '2024-11-14 09:41:06', e: 'HASH_VERIFIED', d: 'a3f2...9d1e ✓' },
-                            { t: '2024-11-14 09:45:20', e: 'DEEP_SCAN_START', d: 'Pattern: all types' },
-                            { t: '2024-11-14 11:03:41', e: 'RECOVERY_COMPLETE', d: '47,823 files' },
-                            { t: '2024-11-14 11:04:00', e: 'REPORT_EXPORTED', d: 'INV-2024-0892.pdf' },
-                        ].map((log, i) => (
-                            <div key={i} className="grid grid-cols-[auto_1fr_1fr] gap-4 items-start text-[10px]">
-                                <span className="text-text-muted whitespace-nowrap">{log.t}</span>
-                                <span className="text-accent-cyan">{log.e}</span>
-                                <span className="text-text-secondary">{log.d}</span>
-                            </div>
-                        ))}
-                        <div className="flex items-center gap-1 mt-2 pt-2 border-t border-bg-border">
-                            <span className="text-accent-cyan">›</span>
-                            <span className="text-text-primary animate-pulse">_</span>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            {/* Target market */}
-            <section className="py-24 px-8 border-t border-white/5">
-                <div className="max-w-5xl mx-auto text-center">
-                    <h2 className="text-3xl font-bold mb-3">{t('landing.market_title')}</h2>
-                    <p className="text-text-muted mb-14 text-sm">&nbsp;</p>
-                    <div className="grid grid-cols-3 gap-6">
-                        {[
-                            { icon: Cpu, mk: 'cyber' },
-                            { icon: Search, mk: 'lab' },
-                            { icon: Users, mk: 'corp' },
-                        ].map(({ icon: Icon, mk }) => (
-                            <div key={mk} className="glass-panel rounded-sm p-8 text-center group hover:border-accent-cyan/20 transition-all">
-                                <div className="w-12 h-12 rounded-sm bg-bg-elevated border border-bg-border flex items-center justify-center mx-auto mb-5 group-hover:border-accent-cyan/20 transition-colors">
-                                    <Icon className="w-6 h-6 text-text-secondary group-hover:text-accent-cyan transition-colors" />
+                            { title: 'Tizimli himoya', desc: "Ma'lumotlar yaxlitligini buzmagan holda xavfsiz o'qish imkoniyati.", icon: ShieldCheck },
+                            { title: 'Chuqur indekslash', desc: "Millionlab fayllar orasidan zarur bo'lgan matn yoki meta-ma'lumotlarni tezkor qidiruv.", icon: Search },
+                            { title: 'Raqamli izlarni tahlil qilish', desc: "Foydalanuvchi faoliyati va tizimdagi harakatlarni aniqlash va tahlil qilish.", icon: Network },
+                            { title: 'Hisobot shakllantirish', desc: "Tahlil natijalarini to'liq rasmga tushiruvchi avtomatlashtirilgan PDF hujjatlari.", icon: FileText }
+                        ].map((feat, i) => (
+                            <motion.div 
+                                key={i}
+                                initial={{ opacity: 0, scale: 0.95 }} 
+                                whileInView={{ opacity: 1, scale: 1 }} 
+                                viewport={{ once: true, margin: "-50px" }} 
+                                transition={{ duration: 0.6, delay: i * 0.1 }}
+                                className="group p-8 rounded-3xl bg-white/[0.01] border border-white/[0.04] hover:bg-white/[0.03] hover:border-white/[0.1] transition-all duration-500 overflow-hidden relative cursor-default"
+                            >
+                                {/* Hover Glow */}
+                                <div className="absolute top-0 right-0 w-64 h-64 bg-white/[0.02] blur-[80px] rounded-full translate-x-1/2 -translate-y-1/2 group-hover:bg-white/[0.06] transition-colors duration-700" />
+                                
+                                <div className="flex flex-col h-full relative z-10">
+                                    <motion.div 
+                                        animate={{ y: [0, -4, 0] }} 
+                                        transition={{ duration: 4 + i, repeat: Infinity, ease: "easeInOut" }}
+                                        className="w-14 h-14 rounded-2xl bg-white/[0.03] border border-white/[0.08] flex items-center justify-center mb-8 shadow-inner"
+                                    >
+                                        <feat.icon className="w-6 h-6 text-[#E6E8EB] group-hover:text-white transition-colors duration-300" />
+                                    </motion.div>
+                                    <h3 className="text-2xl font-bold mb-3 text-white">{feat.title}</h3>
+                                    <p className="text-[16px] text-[#9CA3AF] leading-relaxed font-light">{feat.desc}</p>
                                 </div>
-                                <h3 className="font-semibold text-text-primary mb-2">{t(`landing.market_${mk}`)}</h3>
-                                <p className="text-text-muted text-xs leading-relaxed">{t(`landing.market_${mk}_desc`)}</p>
-                            </div>
+                            </motion.div>
                         ))}
                     </div>
                 </div>
             </section>
 
-            {/* Footer */}
-            <footer className="border-t border-white/5 py-10 px-8">
-                <div className="max-w-6xl mx-auto flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                        <Shield className="w-4 h-4 text-accent-cyan/60" />
-                        <span className="mono text-[10px] text-text-muted tracking-widest">IDFR PLATFORM</span>
+            {/* --- 4. PRODUCT VISUAL SECTION (DYNAMIC TIMELINE) --- */}
+            <section className="py-40 px-6 sm:px-12">
+                 <div className="max-w-7xl mx-auto flex flex-col items-center">
+                    <motion.div initial={{ opacity: 0, y: 40 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-100px" }} transition={{ duration: 0.8 }} className="text-center mb-4">
+                        <h2 className="text-[32px] sm:text-[48px] font-bold tracking-tight mb-6 text-white">Platformaning interaktiv ko'rinishi</h2>
+                        <p className="text-[18px] text-[#9CA3AF] max-w-2xl mx-auto font-light">Tizim chuqurligiga qarab jarayon qanday vizuallashishini kuzating.</p>
+                    </motion.div>
+
+                    {/* Highly Interactive Component mapped to Scroll */}
+                    <AnimatedTimelinePreview />
+                 </div>
+            </section>
+
+            {/* --- 5. EMOTIONAL FINAL CTA --- */}
+            <section className="relative py-48 px-6 sm:px-12 text-center overflow-hidden border-t border-white/[0.02] bg-[#0A0C10]">
+                <AmbientGlow color="rgba(0, 200, 150, 0.08)" top="50%" size="800px" blur="150px" />
+                
+                <motion.div initial={{ opacity: 0, y: 50, scale: 0.95 }} whileInView={{ opacity: 1, y: 0, scale: 1 }} viewport={{ once: true, margin: "-100px" }} transition={{ duration: 1 }} className="relative z-10 max-w-4xl mx-auto flex flex-col items-center">
+                    <div className="w-20 h-20 rounded-3xl bg-white flex items-center justify-center mb-10 shadow-[0_20px_60px_rgba(255,255,255,0.2)]">
+                        <Lock className="w-8 h-8 text-black" />
                     </div>
-                    <div className="flex items-center gap-2">
-                        <Globe className="w-3 h-3 text-status-error/50 animate-pulse" />
-                        <span className="mono text-[10px] text-status-error/70 tracking-widest">{t('landing.footer_classified')}</span>
+                    <h2 className="text-[48px] sm:text-[64px] lg:text-[80px] font-bold tracking-tight mb-8 leading-[1.05] text-white">
+                        SmartRecovery bilan raqamli haqiqatni oching.
+                    </h2>
+                    <br/>
+                    <button
+                        onClick={() => navigate('/register')}
+                        className="group relative px-12 py-5 bg-[#00C896] text-[#0A0C10] font-bold text-[18px] rounded-xl hover:bg-[#00E5AA] hover:scale-[1.03] active:scale-95 transition-all shadow-[0_0_40px_rgba(0,200,150,0.3)] overflow-hidden"
+                    >
+                        Boshlash
+                    </button>
+                    <p className="mt-8 text-[#6B7280] font-mono text-[12px] uppercase tracking-widest">Tizim foydalanishga tayyor</p>
+                </motion.div>
+            </section>
+
+            {/* --- FOOTER --- */}
+            <footer className="border-t border-white/[0.04] py-16 px-6 sm:px-12 bg-[#050505]">
+                <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-8">
+                    <div className="flex items-center gap-3">
+                        <Shield className="w-5 h-5 text-[#6B7280]" />
+                        <span className="font-bold text-[#9CA3AF] tracking-wide text-sm">SmartRecovery</span>
                     </div>
-                    <span className="text-text-muted text-[10px] mono">© 2024 IDFR. {t('landing.footer_rights')}</span>
+                    <div className="flex gap-8 text-[14px] text-[#6B7280] font-medium">
+                        <span className="hover:text-white transition-colors cursor-pointer">Yordam</span>
+                        <span className="hover:text-white transition-colors cursor-pointer">Maxfiylik</span>
+                        <span className="hover:text-white transition-colors cursor-pointer">Qoidalar</span>
+                    </div>
                 </div>
             </footer>
         </div>

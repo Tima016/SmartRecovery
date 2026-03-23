@@ -11,16 +11,13 @@ import {
     ChevronRight,
     Shield,
     Cpu,
+    Briefcase,
 } from 'lucide-react';
-import type { ViewId } from '../../App';
+import { NavLink, useLocation } from 'react-router-dom';
 import { useTranslation } from '../../i18n/useTranslation';
 
-interface Props {
-    activeView: ViewId;
-    onNavigate: (view: ViewId | 'admin') => void;
-}
 
-const navItems: { id: ViewId; icon: React.ElementType; labelKey: string }[] = [
+const navItems: { id: string; icon: React.ElementType; labelKey: string }[] = [
     { id: 'dashboard', icon: LayoutDashboard, labelKey: 'nav.dashboard' },
     { id: 'cases', icon: FolderOpen, labelKey: 'nav.cases' },
     { id: 'acquisition', icon: HardDrive, labelKey: 'nav.acquisition' },
@@ -28,12 +25,14 @@ const navItems: { id: ViewId; icon: React.ElementType; labelKey: string }[] = [
     { id: 'artifacts', icon: Microscope, labelKey: 'nav.artifacts' },
     { id: 'timeline', icon: Clock, labelKey: 'nav.timeline' },
     { id: 'visualization', icon: BarChart3, labelKey: 'nav.visualization' },
+    { id: 'workspace', icon: Briefcase, labelKey: 'nav.workspace' },
     { id: 'reports', icon: FileText, labelKey: 'nav.reports' },
     { id: 'settings', icon: Settings, labelKey: 'nav.settings' },
 ];
 
-export default function Sidebar({ activeView, onNavigate }: Props) {
+export default function Sidebar() {
     const { t } = useTranslation();
+    const location = useLocation();
 
     return (
         <aside
@@ -56,7 +55,7 @@ export default function Sidebar({ activeView, onNavigate }: Props) {
                         className="font-bold text-sm tracking-widest mono"
                         style={{ color: 'var(--text-primary)' }}
                     >
-                        IDFR
+                        SmartRecovery
                     </span>
                 </div>
                 <div
@@ -94,28 +93,39 @@ export default function Sidebar({ activeView, onNavigate }: Props) {
             {/* Nav */}
             <nav className="flex-1 py-2 overflow-y-auto">
                 {navItems.map(({ id, icon: Icon, labelKey }) => {
-                    const isActive = activeView === id;
+                    let to = `/${id}`;
+                    let isActive = location.pathname.startsWith(to);
+
+                    if (id === 'dashboard') {
+                        to = '/dashboard';
+                        isActive = location.pathname === '/dashboard';
+                    }
+
+                    if (id === 'cases') {
+                        to = '/cases';
+                    }
+
                     return (
-                        <button
+                        <NavLink
+                            to={to}
                             key={id}
-                            onClick={() => onNavigate(id)}
-                            className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-all duration-150 group relative ${isActive
-                                ? 'nav-active text-accent-cyan'
-                                : 'border-l-2 border-transparent'
-                                }`}
-                            style={!isActive ? {
-                                color: 'var(--text-secondary)',
-                            } : undefined}
+                            className={({ isActive }) =>
+                                `w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-all duration-150 group relative ${isActive
+                                    ? 'nav-active text-accent-cyan'
+                                    : 'border-l-2 border-transparent text-text-secondary'
+                                }`
+                            }
+                            style={({ isActive }) => (!isActive ? { color: 'var(--text-secondary)' } : undefined)}
                             onMouseEnter={e => {
                                 if (!isActive) {
-                                    (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-primary)';
-                                    (e.currentTarget as HTMLButtonElement).style.background = 'var(--border)';
+                                    (e.currentTarget as HTMLAnchorElement).style.color = 'var(--text-primary)';
+                                    (e.currentTarget as HTMLAnchorElement).style.background = 'var(--border)';
                                 }
                             }}
                             onMouseLeave={e => {
                                 if (!isActive) {
-                                    (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)';
-                                    (e.currentTarget as HTMLButtonElement).style.background = '';
+                                    (e.currentTarget as HTMLAnchorElement).style.color = 'var(--text-secondary)';
+                                    (e.currentTarget as HTMLAnchorElement).style.background = '';
                                 }
                             }}
                         >
@@ -123,7 +133,7 @@ export default function Sidebar({ activeView, onNavigate }: Props) {
                                 }`} />
                             <span className="font-medium tracking-tight">{t(labelKey)}</span>
                             {isActive && <ChevronRight className="w-3 h-3 ml-auto text-accent-cyan opacity-60" />}
-                        </button>
+                        </NavLink>
                     );
                 })}
             </nav>

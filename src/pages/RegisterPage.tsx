@@ -1,15 +1,17 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Shield, UserPlus, Eye, EyeOff, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from '../i18n/useTranslation';
+import { AxiosError } from 'axios';
 
 export default function RegisterPage() {
     const navigate = useNavigate();
-    const { register, isAuthenticated } = useAuth();
+    const { register, isAuthenticated, authLoading } = useAuth();
     const { t } = useTranslation();
 
-    const [name, setName] = useState('');
+    const [firstName, setFirstName] = useState('');
+    const [lastName, setLastName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirm, setConfirm] = useState('');
@@ -18,10 +20,12 @@ export default function RegisterPage() {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState(false);
 
-    if (isAuthenticated) {
-        navigate('/dashboard', { replace: true });
-        return null;
-    }
+    // Redirect via useEffect — NEVER during render
+    useEffect(() => {
+        if (!authLoading && isAuthenticated) {
+            navigate('/dashboard', { replace: true });
+        }
+    }, [isAuthenticated, authLoading, navigate]);
 
     const handleSubmit = useCallback(async (e: React.FormEvent) => {
         e.preventDefault();
@@ -38,16 +42,39 @@ export default function RegisterPage() {
 
         setLoading(true);
         try {
-            await register(name, email, password);
+            await register(firstName, lastName, email, password);
             setSuccess(true);
-            setTimeout(() => navigate('/login', { replace: true }), 2000);
+            // After register, user is auto-logged-in → useEffect redirects to /dashboard
         } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : 'unknown';
-            setError(msg === 'email_taken' ? t('auth.email_taken') : 'Registration failed. Please try again.');
+            if (err instanceof AxiosError) {
+                const status = err.response?.status;
+                const message = err.response?.data?.message ?? '';
+                if (status === 409 || (typeof message === 'string' && message.toLowerCase().includes('already'))) {
+                    setError(t('auth.email_taken'));
+                } else {
+                    setError('Registration failed. Please try again.');
+                }
+            } else {
+                setError('Network error. Please check your connection.');
+            }
         } finally {
             setLoading(false);
         }
-    }, [name, email, password, confirm, register, navigate, t]);
+    }, [firstName, lastName, email, password, confirm, register, t]);
+
+    // Show spinner while checking stored auth
+    if (authLoading) {
+        return (
+            <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg-primary)' }}>
+                <Loader2 className="w-6 h-6 text-accent-cyan animate-spin" />
+            </div>
+        );
+    }
+
+    // Already authenticated — useEffect handles redirect
+    if (isAuthenticated) {
+        return null;
+    }
 
     return (
         <div className="min-h-screen flex items-center justify-center px-4 py-12" style={{ background: 'var(--bg-primary)' }}>
@@ -60,7 +87,7 @@ export default function RegisterPage() {
                     <div className="w-12 h-12 rounded-sm bg-accent-cyan/15 border border-accent-cyan/30 flex items-center justify-center mb-4 shadow-[0_0_30px_rgba(0,200,150,0.12)]">
                         <Shield className="w-6 h-6 text-accent-cyan" />
                     </div>
-                    <span className="mono font-bold tracking-widest text-text-primary">IDFR PLATFORM</span>
+                    <span className="mono font-bold tracking-widest text-text-primary">SMARTRECOVERY</span>
                     <span className="text-text-muted text-xs mt-1 tracking-wide">Request Access</span>
                 </div>
 
@@ -87,15 +114,28 @@ export default function RegisterPage() {
                     )}
 
                     <form onSubmit={handleSubmit} className="space-y-4">
-                        {/* Name */}
+                        {/* First Name */}
                         <div>
-                            <label className="block text-[11px] mono text-text-muted mb-1.5 tracking-wide">{t('auth.full_name').toUpperCase()}</label>
+                            <label className="block text-[11px] mono text-text-muted mb-1.5 tracking-wide">FIRST NAME</label>
                             <input
                                 type="text"
-                                value={name}
-                                onChange={e => setName(e.target.value)}
+                                value={firstName}
+                                onChange={e => setFirstName(e.target.value)}
                                 required
-                                placeholder="Jane Doe"
+                                placeholder="Jane"
+                                className="w-full bg-bg-elevated border border-bg-border rounded-sm px-3.5 py-2.5 text-sm text-text-primary outline-none focus:border-accent-cyan/50 focus:ring-1 focus:ring-accent-cyan/20 transition-all placeholder-text-muted"
+                            />
+                        </div>
+
+                        {/* Last Name */}
+                        <div>
+                            <label className="block text-[11px] mono text-text-muted mb-1.5 tracking-wide">LAST NAME</label>
+                            <input
+                                type="text"
+                                value={lastName}
+                                onChange={e => setLastName(e.target.value)}
+                                required
+                                placeholder="Doe"
                                 className="w-full bg-bg-elevated border border-bg-border rounded-sm px-3.5 py-2.5 text-sm text-text-primary outline-none focus:border-accent-cyan/50 focus:ring-1 focus:ring-accent-cyan/20 transition-all placeholder-text-muted"
                             />
                         </div>
@@ -186,7 +226,7 @@ export default function RegisterPage() {
 
                 <div className="text-center mt-5">
                     <Link to="/" className="text-text-muted text-[11px] mono hover:text-text-secondary transition-colors tracking-wide">
-                        ← IDFR Platform
+                        ← SmartRecovery
                     </Link>
                 </div>
             </div>

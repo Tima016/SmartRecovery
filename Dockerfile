@@ -30,8 +30,9 @@ FROM nginx:1.27-alpine AS runner
 # Remove default nginx config
 RUN rm /etc/nginx/conf.d/default.conf
 
-# Copy custom nginx config
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# copy our server config
+COPY nginx.conf /etc/nginx/nginx.conf
+
 # Copy built dist from builder stage
 COPY --from=builder /app/dist /usr/share/nginx/html
 

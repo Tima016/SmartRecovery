@@ -4,156 +4,160 @@ import {
     useState,
     useEffect,
     useCallback,
+    useRef,
     type ReactNode,
 } from 'react';
+import { authApi } from '../api/auth.api';
+import { TOKEN_KEY } from '../api/client';
 
-export type Role = 'admin' | 'investigator';
+// ─── Types ────────────────────────────────────────────────────────────
+export type Role = 'ADMIN' | 'ANALYST' | 'INVESTIGATOR' | 'AUDITOR';
 
 export interface User {
     id: string;
-    name: string;
     email: string;
+    firstName: string;
+    lastName: string;
     role: Role;
-    active: boolean;
-    joinedAt: string;
+    isTwoFactorEnabled: boolean;
 }
 
-interface StoredUser extends User {
-    passwordHash: string;
-}
+
 
 interface AuthContextType {
     user: User | null;
     isAuthenticated: boolean;
-    login: (email: string, password: string) => Promise<void>;
-    logout: () => void;
-    register: (name: string, email: string, password: string) => Promise<void>;
-    getAllUsers: () => User[];
-    setUserActive: (id: string, active: boolean) => void;
-    setUserRole: (id: string, role: Role) => void;
+    authLoading: boolean;
+    login: (email: string, password: string, totpCode?: string) => Promise<void>;
+    logout: () => Promise<void>;
+    register: (
+        firstName: string,
+        lastName: string,
+        email: string,
+        password: string,
+    ) => Promise<void>;
 }
+
+const REFRESH_TOKEN_KEY = 'idfr_refresh_token';
+const USER_KEY = 'idfr_user';
 
 export const AuthContext = createContext<AuthContextType>({} as AuthContextType);
 
-const USERS_KEY = 'idfr_users';
-const SESSION_KEY = 'idfr_session';
-const LOGS_KEY = 'idfr_logs';
-
-// Simple deterministic hash (not for production — simulated only)
-function simpleHash(s: string): string {
-    let hash = 0;
-    for (let i = 0; i < s.length; i++) {
-        hash = (Math.imul(31, hash) + s.charCodeAt(i)) | 0;
-    }
-    return hash.toString(16);
-}
-
-function getStoredUsers(): StoredUser[] {
-    try { return JSON.parse(localStorage.getItem(USERS_KEY) || '[]'); } catch { return []; }
-}
-
-function saveUsers(users: StoredUser[]) {
-    localStorage.setItem(USERS_KEY, JSON.stringify(users));
-}
-
-export function appendLog(event: string, actor: string, detail: string) {
-    try {
-        const logs = JSON.parse(localStorage.getItem(LOGS_KEY) || '[]');
-        logs.unshift({
-            time: new Date().toISOString(),
-            event,
-            actor,
-            detail,
-        });
-        localStorage.setItem(LOGS_KEY, JSON.stringify(logs.slice(0, 200)));
-    } catch { /* ignore */ }
-}
-
+// ─── Provider ─────────────────────────────────────────────────────────
 export function AuthProvider({ children }: { children: ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
+    const [authLoading, setAuthLoading] = useState(true);
+    const mountedRef = useRef(true);
 
-    // Restore session on mount
+    // Cleanup ref on unmount
     useEffect(() => {
-        try {
-            const session = localStorage.getItem(SESSION_KEY);
-            if (session) {
-                const parsed: User = JSON.parse(session);
-                // Re-validate against stored users
-                const stored = getStoredUsers().find(u => u.id === parsed.id);
-                if (stored && stored.active) setUser({ ...stored });
+        mountedRef.current = true;
+        return () => { mountedRef.current = false; };
+    }, []);
+
+    // ── Rehydrate session on mount ─────────────────────────────────────
+    useEffect(() => {
+        const rehydrate = async () => {
+            const token = localStorage.getItem(TOKEN_KEY);
+            if (!token) {
+                setAuthLoading(false);
+                return;
             }
-        } catch { /* ignore */ }
-    }, []);
 
-    const login = useCallback(async (email: string, password: string) => {
-        await new Promise(r => setTimeout(r, 600)); // simulate network delay
-        const users = getStoredUsers();
-        const found = users.find(
-            u => u.email.toLowerCase() === email.toLowerCase() && u.passwordHash === simpleHash(password)
-        );
-        if (!found) throw new Error('invalid_credentials');
-        if (!found.active) throw new Error('account_disabled');
-        const { passwordHash: _p, ...safeUser } = found;
-        setUser(safeUser);
-        localStorage.setItem(SESSION_KEY, JSON.stringify(safeUser));
-        appendLog('LOGIN', found.email, `Role: ${found.role}`);
-    }, []);
-
-    const logout = useCallback(() => {
-        appendLog('LOGOUT', user?.email ?? 'unknown', 'Session terminated');
-        setUser(null);
-        localStorage.removeItem(SESSION_KEY);
-    }, [user]);
-
-    const register = useCallback(async (name: string, email: string, password: string) => {
-        await new Promise(r => setTimeout(r, 600));
-        const users = getStoredUsers();
-        if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
-            throw new Error('email_taken');
-        }
-        // First user is always admin
-        const isFirstUser = users.length === 0;
-        const newUser: StoredUser = {
-            id: `u_${Date.now()}`,
-            name,
-            email,
-            role: isFirstUser ? 'admin' : 'investigator',
-            active: true,
-            joinedAt: new Date().toISOString().split('T')[0],
-            passwordHash: simpleHash(password),
+            try {
+                // Validate token by fetching current user
+                const data = await authApi.me();
+                if (mountedRef.current) {
+                    setUser(data.user);
+                }
+            } catch {
+                // Token invalid or expired — clear stored credentials
+                localStorage.removeItem(TOKEN_KEY);
+                localStorage.removeItem(REFRESH_TOKEN_KEY);
+                localStorage.removeItem(USER_KEY);
+            } finally {
+                if (mountedRef.current) {
+                    setAuthLoading(false);
+                }
+            }
         };
-        users.push(newUser);
-        saveUsers(users);
-        appendLog('REGISTER', email, `Role assigned: ${newUser.role}`);
+
+        rehydrate();
     }, []);
 
-    const getAllUsers = useCallback((): User[] => {
-        return getStoredUsers().map(({ passwordHash: _p, ...u }) => u);
+    // ── Login ──────────────────────────────────────────────────────────
+    const login = useCallback(
+        async (email: string, password: string, totpCode?: string) => {
+            const data = await authApi.login({
+                email,
+                password,
+                ...(totpCode ? { totpCode } : {}),
+            });
+
+            localStorage.setItem(TOKEN_KEY, data.accessToken);
+            localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
+            localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+
+            if (mountedRef.current) {
+                setUser(data.user);
+            }
+        },
+        [],
+    );
+
+    // ── Register ───────────────────────────────────────────────────────
+    const register = useCallback(
+        async (
+            firstName: string,
+            lastName: string,
+            email: string,
+            password: string,
+        ) => {
+            const data = await authApi.register({
+                firstName,
+                lastName,
+                email,
+                password,
+            });
+
+            localStorage.setItem(TOKEN_KEY, data.accessToken);
+            localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
+            localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+
+            if (mountedRef.current) {
+                setUser(data.user);
+            }
+        },
+        [],
+    );
+
+    // ── Logout ─────────────────────────────────────────────────────────
+    const logout = useCallback(async () => {
+        try {
+            await authApi.logout();
+        } catch {
+            // Best-effort: even if the server call fails, clear local state
+        }
+
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(REFRESH_TOKEN_KEY);
+        localStorage.removeItem(USER_KEY);
+
+        if (mountedRef.current) {
+            setUser(null);
+        }
     }, []);
-
-    const setUserActive = useCallback((id: string, active: boolean) => {
-        const users = getStoredUsers();
-        const idx = users.findIndex(u => u.id === id);
-        if (idx !== -1) {
-            users[idx].active = active;
-            saveUsers(users);
-            appendLog(active ? 'ACTIVATE_USER' : 'DEACTIVATE_USER', user?.email ?? 'admin', `Target: ${users[idx].email}`);
-        }
-    }, [user]);
-
-    const setUserRole = useCallback((id: string, role: Role) => {
-        const users = getStoredUsers();
-        const idx = users.findIndex(u => u.id === id);
-        if (idx !== -1) {
-            users[idx].role = role;
-            saveUsers(users);
-            appendLog('CHANGE_ROLE', user?.email ?? 'admin', `${users[idx].email} → ${role}`);
-        }
-    }, [user]);
 
     return (
         <AuthContext.Provider
-            value={{ user, isAuthenticated: !!user, login, logout, register, getAllUsers, setUserActive, setUserRole }}
+            value={{
+                user,
+                isAuthenticated: !!user,
+                authLoading,
+                login,
+                logout,
+                register,
+            }}
         >
             {children}
         </AuthContext.Provider>
