@@ -23,3 +23,6 @@ build
 *.njsproj
 *.sln
 *.sw?
+demo-forensic-5gb.img 
+*.img 
+*.img 
