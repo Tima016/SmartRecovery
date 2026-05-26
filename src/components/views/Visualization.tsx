@@ -13,6 +13,7 @@ import { correlationApi } from '../../api/correlation.api';
 import { filesystemApi } from '../../api/filesystem.api';
 import { timelineApi } from '../../api/timeline.api';
 import { artifactsApi } from '../../api/artifacts.api';
+import { useCase } from '../../context/CaseContext';
 
 // ── Color maps ────────────────────────────────────────────────────────────
 const HEAT_COLORS: Record<string, string> = {
@@ -41,9 +42,18 @@ function classifyHeatType(entry: any): string {
 
 // ── Component ─────────────────────────────────────────────────────────────
 export default function Visualization() {
-    const { caseId } = useParams<{ caseId: string }>();
-    const [loading, setLoading] = useState(true);
+    const { caseId: urlCaseId } = useParams<{ caseId: string }>();
+    const { selectedCaseId, setSelectedCaseId } = useCase();
+    const effectiveCaseId = urlCaseId || selectedCaseId;
+
+    const [loading, setLoading] = useState(false);
     const [selectedLegend, setSelectedLegend] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (urlCaseId && urlCaseId !== selectedCaseId) {
+            setSelectedCaseId(urlCaseId);
+        }
+    }, [urlCaseId]);
 
     // Raw API data
     const [fileEntries, setFileEntries] = useState<any[]>([]);
@@ -52,36 +62,37 @@ export default function Visualization() {
     const [graph, setGraph] = useState<{ nodes: any[]; edges: any[] } | null>(null);
 
     useEffect(() => {
-        if (!caseId) return;
+        if (!effectiveCaseId) return;
         let active = true;
         setLoading(true);
 
         Promise.allSettled([
-            filesystemApi.getTree(caseId),
-            timelineApi.getByCaseId(caseId),
-            artifactsApi.getByCaseId(caseId),
-            correlationApi.compute(caseId).then(() => correlationApi.getGraph(caseId)),
+            filesystemApi.getTree(effectiveCaseId),
+            timelineApi.getByCaseId(effectiveCaseId),
+            artifactsApi.getByCaseId(effectiveCaseId),
+            // Correlation is optional — compute then fetch graph, catch gracefully
+            correlationApi.compute(effectiveCaseId).catch(() => null).then(() => correlationApi.getGraph(effectiveCaseId).catch(() => null)),
         ]).then(([fsRes, tlRes, artRes, graphRes]) => {
             if (!active) return;
             if (fsRes.status === 'fulfilled') {
-                const data = Array.isArray(fsRes.value) ? fsRes.value : (fsRes.value?.data ?? []);
+                const data = Array.isArray(fsRes.value) ? fsRes.value : (fsRes.value?.entries ?? fsRes.value?.data ?? []);
                 setFileEntries(data);
             }
             if (tlRes.status === 'fulfilled') {
-                const data = Array.isArray(tlRes.value) ? tlRes.value : (tlRes.value?.data ?? []);
+                const data = Array.isArray(tlRes.value) ? tlRes.value : (tlRes.value?.events ?? tlRes.value?.data ?? []);
                 setTimelineEvents(data);
             }
             if (artRes.status === 'fulfilled') {
                 const data = Array.isArray(artRes.value) ? artRes.value : (artRes.value?.data ?? []);
                 setArtifacts(data);
             }
-            if (graphRes.status === 'fulfilled') {
+            if (graphRes.status === 'fulfilled' && graphRes.value) {
                 setGraph(graphRes.value);
             }
         }).finally(() => { if (active) setLoading(false); });
 
         return () => { active = false; };
-    }, [caseId]);
+    }, [effectiveCaseId]);
 
     // ── Derived datasets ──────────────────────────────────────────────────
     // 1. Disk Sector Heatmap — 128 cells from file entries
@@ -165,6 +176,15 @@ export default function Visualization() {
 
     const totalNodes = graph?.nodes?.length ?? 0;
     const totalEdges = graph?.edges?.length ?? 0;
+
+    if (!effectiveCaseId) {
+        return (
+            <div className="h-full flex flex-col items-center justify-center space-y-4 p-4 overflow-y-auto relative min-h-[400px]">
+                <h2 className="text-xl font-bold text-text-primary mono">No Case Selected</h2>
+                <p className="text-text-muted text-sm mono">Please select a case to view visualization data</p>
+            </div>
+        );
+    }
 
     if (loading) {
         return (

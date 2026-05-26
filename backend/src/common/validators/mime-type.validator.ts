@@ -2,9 +2,18 @@ import { FileValidator, Injectable } from '@nestjs/common';
 
 /**
  * Custom file validator for MIME type checking on evidence uploads.
- * Rejects dangerous executable file types that should never be uploaded
- * as evidence directly (they should be uploaded as disk images instead).
+ * Enforces forensic disk image extensions and rejects executable payload types.
  */
+
+// Strict allow-list for forensic container uploads
+const ALLOWED_FORENSIC_EXTENSIONS = new Set([
+    '.img',
+    '.dd',
+    '.raw',
+    '.iso',
+    '.e01',
+    '.001',
+]);
 
 // Deny-list approach: block known dangerous types
 const BLOCKED_MIME_TYPES = new Set([
@@ -38,6 +47,12 @@ export class MimeTypeValidator extends FileValidator<MimeTypeValidatorOptions> {
     isValid(file?: Express.Multer.File): boolean {
         if (!file) return false;
 
+        // Primary gate: extension must be a supported forensic disk image/container.
+        const ext = this.getExtension(file.originalname);
+        if (!ALLOWED_FORENSIC_EXTENSIONS.has(ext)) {
+            return false;
+        }
+
         // Check MIME type against allow-list (if provided)
         if (this.validationOptions?.allowedMimeTypes?.length) {
             return this.validationOptions.allowedMimeTypes.includes(file.mimetype);
@@ -49,7 +64,6 @@ export class MimeTypeValidator extends FileValidator<MimeTypeValidatorOptions> {
         }
 
         // Secondary check: validate extension
-        const ext = this.getExtension(file.originalname);
         if (BLOCKED_EXTENSIONS.has(ext)) {
             return false;
         }
@@ -61,7 +75,7 @@ export class MimeTypeValidator extends FileValidator<MimeTypeValidatorOptions> {
         if (this.validationOptions?.allowedMimeTypes?.length) {
             return `File type not allowed. Accepted types: ${this.validationOptions.allowedMimeTypes.join(', ')}`;
         }
-        return 'File type is blocked for security reasons. Executable files (.exe, .bat, .ps1, etc.) must be uploaded within disk images, not directly.';
+        return 'Only forensic image formats are allowed: .img, .dd, .raw, .iso, .E01, .001';
     }
 
     private getExtension(filename: string): string {

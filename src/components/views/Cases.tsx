@@ -4,11 +4,12 @@ import {
     Search,
     Filter,
     MoreHorizontal,
-    Loader2,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { casesApi } from '../../api/cases.api';
+import { useCase } from '../../context/CaseContext';
 import { Skeleton } from '../ui/Skeleton';
+import NewCaseWizard from '../modals/NewCaseWizard';
 
 // ─── Types ────────────────────────────────────────────────────────────
 interface Case {
@@ -61,11 +62,12 @@ const statusText: Record<string, string> = {
 
 export default function Cases() {
     const navigate = useNavigate();
+    const { setSelectedCaseId } = useCase();
     const [cases, setCases] = useState<Case[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [search, setSearch] = useState('');
-    const [isCreating, setIsCreating] = useState(false);
+    const [wizardOpen, setWizardOpen] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -98,30 +100,6 @@ export default function Cases() {
         const q = search.toLowerCase();
         return getCaseName(c).toLowerCase().includes(q) || getCaseDisplayId(c).toLowerCase().includes(q);
     });
-
-    const handleNewCase = async () => {
-        try {
-            setIsCreating(true);
-
-            const data = await casesApi.create({
-                title: 'New Investigation'
-            });
-
-            const newCaseId = data?.id ?? data?.data?.id;
-
-            if (!newCaseId) {
-                throw new Error('No ID returned');
-            }
-
-            navigate(`/cases/${newCaseId}`);
-
-        } catch (err: any) {
-            console.error(err?.response?.data || err);
-            alert(JSON.stringify(err?.response?.data || err.message));
-        } finally {
-            setIsCreating(false);
-        }
-    };
 
     if (loading) {
         return (
@@ -160,78 +138,84 @@ export default function Cases() {
     }
 
     return (
-        <div className="h-full flex flex-col items-center">
-            {/* Full Width Case Table */}
-            <div className="flex flex-col w-full max-w-5xl h-full border-r border-l border-bg-border bg-bg-primary">
-                {/* Toolbar */}
-                <div className="flex items-center gap-3 px-4 py-3 border-b border-bg-border flex-shrink-0">
-                    <div className="flex items-center gap-2 flex-1 bg-bg-elevated border border-bg-border rounded-sm px-3 py-1.5">
-                        <Search className="w-3.5 h-3.5 text-text-muted" />
-                        <input
-                            type="text"
-                            placeholder="Search cases..."
-                            value={search}
-                            onChange={e => setSearch(e.target.value)}
-                            className="flex-1 bg-transparent text-text-primary text-xs outline-none placeholder-text-muted mono"
-                        />
-                    </div>
-                    <button className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-elevated border border-bg-border text-text-secondary text-xs hover:text-text-primary transition-colors rounded-sm">
-                        <Filter className="w-3.5 h-3.5" />
-                        Filter
-                    </button>
-                    <button
-                        onClick={handleNewCase}
-                        disabled={isCreating}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-accent-cyan/10 border border-accent-cyan/30 text-accent-cyan text-xs hover:bg-accent-cyan/20 transition-colors rounded-sm disabled:opacity-50"
-                    >
-                        {isCreating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                        New Case
-                    </button>
-                </div>
+        <>
+            {/* Wizard Modal */}
+            {wizardOpen && (
+                <NewCaseWizard onClose={() => setWizardOpen(false)} />
+            )}
 
-                {/* Table Header */}
-                <div className="grid gap-2 px-4 py-2 bg-bg-elevated border-b border-bg-border text-[10px] mono text-text-muted uppercase tracking-wide"
-                    style={{ gridTemplateColumns: '1.2fr 2.2fr 1fr 0.8fr 0.7fr 32px' }}>
-                    <span>Case ID</span>
-                    <span>Name</span>
-                    <span>Investigator</span>
-                    <span>Status</span>
-                    <span>Priority</span>
-                    <span />
-                </div>
-
-                {/* Rows */}
-                <div className="flex-1 overflow-y-auto divide-y divide-bg-border/30">
-                    {filtered.length > 0 ? filtered.map(c => {
-                        const status = getCaseStatus(c);
-                        const priority = getCasePriority(c);
-                        return (
-                            <div
-                                key={c.id}
-                                onClick={() => navigate(`/cases/${c.id}`)}
-                                className="grid gap-2 px-4 py-2.5 cursor-pointer transition-all items-center table-row-hover border-l-2 border-transparent hover:border-accent-cyan"
-                                style={{ gridTemplateColumns: '1.2fr 2.2fr 1fr 0.8fr 0.7fr 32px' }}
-                            >
-                                <span className="text-accent-cyan text-[11px] mono font-medium truncate">{getCaseDisplayId(c)}</span>
-                                <span className="text-text-primary text-xs truncate">{getCaseName(c)}</span>
-                                <span className="text-text-secondary text-xs truncate">{getCaseInvestigator(c)}</span>
-                                <div className="flex items-center gap-1.5">
-                                    <span className={`status-dot ${statusDot[status] ?? 'info'}`} />
-                                    <span className={`text-[10px] mono ${statusText[status] ?? 'text-text-muted'}`}>{status}</span>
-                                </div>
-                                <span className={`tag border text-[9px] self-start ${priorityColor[priority] ?? priorityColor.MEDIUM}`}>{priority}</span>
-                                <button className="text-text-muted hover:text-text-secondary">
-                                    <MoreHorizontal className="w-3.5 h-3.5" />
-                                </button>
-                            </div>
-                        );
-                    }) : (
-                        <div className="px-4 py-8 text-center text-text-muted text-xs mono">
-                            {search ? 'No cases match your search' : 'No cases found'}
+            <div className="h-full flex flex-col items-center">
+                {/* Full Width Case Table */}
+                <div className="flex flex-col w-full max-w-5xl h-full border-r border-l border-bg-border bg-bg-primary">
+                    {/* Toolbar */}
+                    <div className="flex items-center gap-3 px-4 py-3 border-b border-bg-border flex-shrink-0">
+                        <div className="flex items-center gap-2 flex-1 bg-bg-elevated border border-bg-border rounded-sm px-3 py-1.5">
+                            <Search className="w-3.5 h-3.5 text-text-muted" />
+                            <input
+                                type="text"
+                                placeholder="Search cases..."
+                                value={search}
+                                onChange={e => setSearch(e.target.value)}
+                                className="flex-1 bg-transparent text-text-primary text-xs outline-none placeholder-text-muted mono"
+                            />
                         </div>
-                    )}
+                        <button className="flex items-center gap-1.5 px-3 py-1.5 bg-bg-elevated border border-bg-border text-text-secondary text-xs hover:text-text-primary transition-colors rounded-sm">
+                            <Filter className="w-3.5 h-3.5" />
+                            Filter
+                        </button>
+                        <button
+                            onClick={() => setWizardOpen(true)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-accent-cyan/10 border border-accent-cyan/30 text-accent-cyan text-xs hover:bg-accent-cyan/20 transition-colors rounded-sm"
+                        >
+                            <Plus className="w-3.5 h-3.5" />
+                            New Case
+                        </button>
+                    </div>
+
+                    {/* Table Header */}
+                    <div className="grid gap-2 px-4 py-2 bg-bg-elevated border-b border-bg-border text-[10px] mono text-text-muted uppercase tracking-wide"
+                        style={{ gridTemplateColumns: '1.2fr 2.2fr 1fr 0.8fr 0.7fr 32px' }}>
+                        <span>Case ID</span>
+                        <span>Name</span>
+                        <span>Investigator</span>
+                        <span>Status</span>
+                        <span>Priority</span>
+                        <span />
+                    </div>
+
+                    {/* Rows */}
+                    <div className="flex-1 overflow-y-auto divide-y divide-bg-border/30">
+                        {filtered.length > 0 ? filtered.map(c => {
+                            const status = getCaseStatus(c);
+                            const priority = getCasePriority(c);
+                            return (
+                                <div
+                                    key={c.id}
+                                    onClick={() => { setSelectedCaseId(c.id); navigate(`/cases/${c.id}`); }}
+                                    className="grid gap-2 px-4 py-2.5 cursor-pointer transition-all items-center table-row-hover border-l-2 border-transparent hover:border-accent-cyan"
+                                    style={{ gridTemplateColumns: '1.2fr 2.2fr 1fr 0.8fr 0.7fr 32px' }}
+                                >
+                                    <span className="text-accent-cyan text-[11px] mono font-medium truncate">{getCaseDisplayId(c)}</span>
+                                    <span className="text-text-primary text-xs truncate">{getCaseName(c)}</span>
+                                    <span className="text-text-secondary text-xs truncate">{getCaseInvestigator(c)}</span>
+                                    <div className="flex items-center gap-1.5">
+                                        <span className={`status-dot ${statusDot[status] ?? 'info'}`} />
+                                        <span className={`text-[10px] mono ${statusText[status] ?? 'text-text-muted'}`}>{status}</span>
+                                    </div>
+                                    <span className={`tag border text-[9px] self-start ${priorityColor[priority] ?? priorityColor.MEDIUM}`}>{priority}</span>
+                                    <button className="text-text-muted hover:text-text-secondary">
+                                        <MoreHorizontal className="w-3.5 h-3.5" />
+                                    </button>
+                                </div>
+                            );
+                        }) : (
+                            <div className="px-4 py-8 text-center text-text-muted text-xs mono">
+                                {search ? 'No cases match your search' : 'No cases found — click "New Case" to begin an investigation'}
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
-        </div>
+        </>
     );
 }

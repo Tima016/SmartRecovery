@@ -1,22 +1,10 @@
-import { useState, useEffect } from 'react';
-import {
-    FileText,
-    Download,
-    CheckCircle2,
-    Hash,
-    Shield,
-    AlertTriangle,
-    Clock,
-    User,
-    ChevronRight,
-    Loader2,
-} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { FileText, Download, CheckCircle2, Hash, Shield, AlertTriangle, Clock, ChevronRight, Loader2 } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { reportsApi } from '../../api/reports.api';
 import { evidenceApi } from '../../api/evidence.api';
 import { casesApi } from '../../api/cases.api';
 
-// ─── Types ────────────────────────────────────────────────────────────
 interface EvidenceItem {
     id: string;
     type: string;
@@ -35,33 +23,35 @@ interface CaseSummary {
     classification: string;
 }
 
+const unwrap = (payload: any) => {
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.data)) return payload.data;
+    if (payload?.case || payload?.statistics) return payload;
+    if (payload?.data?.case || payload?.data?.statistics) return payload.data;
+    return payload ?? null;
+};
+
 export default function Reports() {
     const { caseId } = useParams<{ caseId: string }>();
     const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
     const [caseSummary, setCaseSummary] = useState<CaseSummary | null>(null);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState('');
+    const [loadError, setLoadError] = useState('');
+    const [exportError, setExportError] = useState('');
     const [generating, setGenerating] = useState(false);
     const [exported, setExported] = useState(false);
-    const [formats, setFormats] = useState({
-        pdf1: true,
-        pdf2: false,
-        coc: false,
-        csv: true,
-        json: true,
-    });
 
     useEffect(() => {
         let cancelled = false;
 
         const fetchReportData = async () => {
             if (!caseId) {
-                // No case selected — load empty state
                 setLoading(false);
                 return;
             }
 
             try {
+                setLoadError('');
                 const [evidenceRes, caseRes] = await Promise.allSettled([
                     evidenceApi.getByCaseId(caseId),
                     casesApi.getById(caseId),
@@ -69,33 +59,40 @@ export default function Reports() {
 
                 if (cancelled) return;
 
-                // Evidence items
-                const evidenceData = evidenceRes.status === 'fulfilled' ? evidenceRes.value.data : [];
+                const evidenceData = evidenceRes.status === 'fulfilled' ? unwrap(evidenceRes.value) : [];
                 const evidenceList = Array.isArray(evidenceData) ? evidenceData : (evidenceData?.data ?? []);
                 const mappedEvidence: EvidenceItem[] = evidenceList.map((e: any) => ({
-                    id: e.evidenceNumber ?? e.id ?? '—',
+                    id: e.evidenceNumber ?? e.id ?? 'N/A',
                     type: e.type ?? e.category ?? 'File',
-                    name: e.name ?? e.description ?? '—',
-                    hash: e.hash ?? e.sha256 ?? '—',
-                    acquired: e.acquiredAt ?? e.createdAt ?? '—',
-                    status: (e.status ?? 'PENDING').toUpperCase(),
+                    name: e.name ?? e.originalFilename ?? e.description ?? 'N/A',
+                    hash: e.hash ?? e.sha256 ?? 'N/A',
+                    acquired: e.acquiredAt ?? e.uploadedAt ?? e.createdAt ?? 'N/A',
+                    status: String(e.status ?? 'PENDING').toUpperCase(),
                 }));
                 setEvidenceItems(mappedEvidence);
 
-                // Case summary
-                const c = caseRes.status === 'fulfilled' ? (caseRes.value.data.data ?? caseRes.value.data) : null;
-                if (c) {
+                const casePayload = caseRes.status === 'fulfilled' ? unwrap(caseRes.value) : null;
+                const c = casePayload?.case ?? casePayload;
+                if (c && typeof c === 'object') {
+                    const investigator = c.assignedTo
+                        ? `${c.assignedTo.firstName ?? ''} ${c.assignedTo.lastName ?? ''}`.trim()
+                        : c.createdBy
+                            ? `${c.createdBy.firstName ?? ''} ${c.createdBy.lastName ?? ''}`.trim()
+                            : c.investigator;
+
                     setCaseSummary({
-                        caseId: c.caseNumber ?? c.id ?? '—',
-                        subject: c.subject ?? c.title ?? c.name ?? '—',
-                        investigator: c.investigator ?? (c.createdBy ? `${c.createdBy.firstName ?? ''} ${c.createdBy.lastName ?? ''}`.trim() : '—'),
-                        organization: c.organization ?? c.client ?? '—',
-                        dateRange: c.dateRange ?? (c.createdAt ? new Date(c.createdAt).toISOString().split('T')[0] : '—'),
+                        caseId: c.caseNumber ?? c.id ?? 'N/A',
+                        subject: c.subject ?? c.title ?? c.name ?? 'N/A',
+                        investigator: investigator || 'N/A',
+                        organization: c.organization ?? c.client ?? 'N/A',
+                        dateRange: c.dateRange
+                            ?? (c.openedAt ? new Date(c.openedAt).toISOString().split('T')[0]
+                                : c.createdAt ? new Date(c.createdAt).toISOString().split('T')[0] : 'N/A'),
                         classification: c.classification ?? 'STANDARD',
                     });
                 }
             } catch (err: unknown) {
-                if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load report data');
+                if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Failed to load report data');
             } finally {
                 if (!cancelled) setLoading(false);
             }
@@ -108,34 +105,28 @@ export default function Reports() {
     const handleExport = async () => {
         if (!caseId) return;
         setGenerating(true);
+        setExportError('');
         try {
-            const tasks = [];
-            if (formats.pdf1 || formats.pdf2 || formats.coc) tasks.push(reportsApi.exportPdf(caseId));
-            if (formats.csv) tasks.push(reportsApi.exportCsv(caseId));
-            if (formats.json) tasks.push(reportsApi.exportJson(caseId));
-
-            await Promise.allSettled(tasks);
+            await reportsApi.exportPdf(caseId);
             setExported(true);
-        } catch {
-            // Fallback: show exported anyway for UX
-            setExported(true);
+        } catch (err: any) {
+            setExported(false);
+            setExportError(err?.message || 'PDF export failed');
         } finally {
             setGenerating(false);
         }
     };
 
+    const stats = useMemo(() => {
+        const verified = evidenceItems.filter((e) => e.status === 'VERIFIED').length;
+        const pending = evidenceItems.length - verified;
+        return { verified, pending, total: evidenceItems.length };
+    }, [evidenceItems]);
+
     if (loading) {
         return (
             <div className="h-full flex items-center justify-center">
                 <Loader2 className="w-6 h-6 text-accent-cyan animate-spin" />
-            </div>
-        );
-    }
-
-    if (error) {
-        return (
-            <div className="h-full flex items-center justify-center text-status-error text-sm mono">
-                {error}
             </div>
         );
     }
@@ -151,8 +142,18 @@ export default function Reports() {
 
     return (
         <div className="h-full overflow-y-auto p-4 space-y-4">
+            {loadError && (
+                <div className="glass-panel rounded-sm border border-status-error/30 bg-status-error/10 p-3 text-status-error text-xs mono">
+                    Report data loaded with issues: {loadError}
+                </div>
+            )}
+            {exportError && (
+                <div className="glass-panel rounded-sm border border-status-error/30 bg-status-error/10 p-3 text-status-error text-xs mono">
+                    {exportError}
+                </div>
+            )}
+
             <div className="grid grid-cols-3 gap-4">
-                {/* Report Meta */}
                 <div className="space-y-4">
                     <div className="glass-panel rounded-sm p-4">
                         <div className="flex items-center gap-2 mb-3">
@@ -183,7 +184,7 @@ export default function Reports() {
                                         ? <CheckCircle2 className="w-3 h-3 text-status-ok flex-shrink-0" />
                                         : <AlertTriangle className="w-3 h-3 text-status-warn flex-shrink-0" />}
                                     <span className="text-text-muted text-[10px] mono w-12 flex-shrink-0">{e.id}</span>
-                                    <span className="text-text-secondary text-[10px] mono truncate">{e.hash.slice(0, 16)}…</span>
+                                    <span className="text-text-secondary text-[10px] mono truncate">{e.hash.slice(0, 16)}...</span>
                                 </div>
                             ))}
                             {evidenceItems.length === 0 && (
@@ -192,33 +193,34 @@ export default function Reports() {
                         </div>
                     </div>
 
-                    {/* Export */}
+                    <div className="glass-panel rounded-sm p-4">
+                        <div className="flex items-center gap-2 mb-3">
+                            <Clock className="w-3.5 h-3.5 text-accent-cyan" />
+                            <span className="text-text-primary text-xs font-semibold">Report Metrics</span>
+                        </div>
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between text-[10px] mono">
+                                <span className="text-text-muted">Total Evidence</span>
+                                <span className="text-text-primary">{stats.total}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-[10px] mono">
+                                <span className="text-text-muted">Verified</span>
+                                <span className="text-status-ok">{stats.verified}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-[10px] mono">
+                                <span className="text-text-muted">Pending Review</span>
+                                <span className="text-status-warn">{stats.pending}</span>
+                            </div>
+                        </div>
+                    </div>
+
                     <div className="glass-panel rounded-sm p-4">
                         <div className="flex items-center gap-2 mb-3">
                             <FileText className="w-3.5 h-3.5 text-accent-cyan" />
-                            <span className="text-text-primary text-xs font-semibold">Export Report</span>
+                            <span className="text-text-primary text-xs font-semibold">Export</span>
                         </div>
-                        <div className="space-y-2 mb-3">
-                            <label className="flex items-center gap-2 cursor-pointer group">
-                                <input type="checkbox" checked={formats.pdf1} onChange={e => setFormats(s => ({ ...s, pdf1: e.target.checked }))} className="accent-[#00C896] w-3 h-3" />
-                                <span className="text-text-secondary text-[10px] group-hover:text-text-primary transition-colors">Executive Summary (PDF)</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer group">
-                                <input type="checkbox" checked={formats.pdf2} onChange={e => setFormats(s => ({ ...s, pdf2: e.target.checked }))} className="accent-[#00C896] w-3 h-3" />
-                                <span className="text-text-secondary text-[10px] group-hover:text-text-primary transition-colors">Full Technical Report (PDF)</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer group">
-                                <input type="checkbox" checked={formats.coc} onChange={e => setFormats(s => ({ ...s, coc: e.target.checked }))} className="accent-[#00C896] w-3 h-3" />
-                                <span className="text-text-secondary text-[10px] group-hover:text-text-primary transition-colors">Evidence Chain of Custody</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer group">
-                                <input type="checkbox" checked={formats.csv} onChange={e => setFormats(s => ({ ...s, csv: e.target.checked }))} className="accent-[#00C896] w-3 h-3" />
-                                <span className="text-text-secondary text-[10px] group-hover:text-text-primary transition-colors">Timeline Export (CSV)</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer group">
-                                <input type="checkbox" checked={formats.json} onChange={e => setFormats(s => ({ ...s, json: e.target.checked }))} className="accent-[#00C896] w-3 h-3" />
-                                <span className="text-text-secondary text-[10px] group-hover:text-text-primary transition-colors">Hash Manifest (JSON)</span>
-                            </label>
+                        <div className="mb-3 text-text-secondary text-[10px] leading-relaxed">
+                            Generates one consolidated professional PDF report with case summary, evidence integrity, custody, timeline and recovery findings.
                         </div>
                         <button
                             onClick={handleExport}
@@ -231,7 +233,7 @@ export default function Reports() {
                             {generating ? (
                                 <>
                                     <div className="w-3 h-3 border border-accent-cyan/30 border-t-accent-cyan rounded-full animate-spin" />
-                                    Generating…
+                                    Generating...
                                 </>
                             ) : exported ? (
                                 <>
@@ -241,16 +243,14 @@ export default function Reports() {
                             ) : (
                                 <>
                                     <Download className="w-3.5 h-3.5" />
-                                    Export Selected Reports
+                                    Export General Report (PDF)
                                 </>
                             )}
                         </button>
                     </div>
                 </div>
 
-                {/* Evidence Table + Preview */}
                 <div className="col-span-2 space-y-4">
-                    {/* Evidence */}
                     <div className="glass-panel rounded-sm overflow-hidden">
                         <div className="flex items-center justify-between px-4 py-2.5 border-b border-bg-border">
                             <div className="flex items-center gap-2">
@@ -270,8 +270,8 @@ export default function Reports() {
                                     <span className="text-accent-cyan text-[10px] mono font-bold">{e.id}</span>
                                     <span className="tag bg-bg-elevated border border-bg-border text-text-muted text-[9px]">{e.type}</span>
                                     <span className="text-text-primary text-xs truncate">{e.name}</span>
-                                    <span className="text-text-muted text-[10px] mono">{e.hash.slice(0, 16)}…</span>
-                                    <span className="text-text-secondary text-[10px] mono">{typeof e.acquired === 'string' ? e.acquired.split('T')[0] : '—'}</span>
+                                    <span className="text-text-muted text-[10px] mono">{e.hash.slice(0, 16)}...</span>
+                                    <span className="text-text-secondary text-[10px] mono">{typeof e.acquired === 'string' ? e.acquired.split('T')[0] : 'N/A'}</span>
                                     <div className="flex items-center gap-1">
                                         {e.status === 'VERIFIED'
                                             ? <CheckCircle2 className="w-3 h-3 text-status-ok" />
@@ -285,7 +285,6 @@ export default function Reports() {
                         </div>
                     </div>
 
-                    {/* Report Preview */}
                     <div className="glass-panel rounded-sm p-4 flex-1">
                         <div className="flex items-center gap-2 mb-3">
                             <FileText className="w-3.5 h-3.5 text-accent-cyan" />
@@ -320,10 +319,13 @@ export default function Reports() {
                                 <div className="space-y-0.5 text-[10px] text-text-muted">
                                     {evidenceItems.slice(0, 5).map((e, i) => (
                                         <div key={e.id} className="flex items-start gap-1">
-                                            <User className="w-2.5 h-2.5 text-status-warn mt-0.5 flex-shrink-0" />
-                                            {i + 1}. {e.name} ({e.type}) — {e.status}
+                                            <ChevronRight className="w-2.5 h-2.5 text-status-warn mt-0.5 flex-shrink-0" />
+                                            {i + 1}. {e.name} ({e.type}) - {e.status}
                                         </div>
                                     ))}
+                                    {evidenceItems.length === 0 && (
+                                        <div className="text-[10px] text-text-muted">No evidence records yet.</div>
+                                    )}
                                 </div>
                             </div>
                         </div>

@@ -17,7 +17,7 @@ export class ArtifactsController {
     constructor(private readonly artifactsService: ArtifactsService) { }
 
     @Post('extract')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Extract digital artifacts from evidence (browser, USB, registry, event logs)' })
     extract(
         @Param('caseId') caseId: string,
@@ -29,7 +29,7 @@ export class ArtifactsController {
     }
 
     @Get()
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'List artifacts for a case' })
     @ApiQuery({ name: 'type', required: false, enum: ArtifactType })
     findAll(@Param('caseId') caseId: string, @Query('type') type?: ArtifactType) {
@@ -37,7 +37,7 @@ export class ArtifactsController {
     }
 
     @Get(':id')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Get artifact details with extracted data' })
     findOne(@Param('id') id: string) {
         return this.artifactsService.findOne(id);

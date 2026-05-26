@@ -17,7 +17,8 @@ import { carveFiles } from './file-carver.util';
 
 function buildJpegBuffer(bodySize = 8192): Buffer {
     const header = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
-    const body = Buffer.alloc(bodySize, 0xa0);
+    const body = Buffer.alloc(bodySize);
+    for (let i = 0; i < body.length; i++) body[i] = i % 256;
     const footer = Buffer.from([0xff, 0xd9]);
     return Buffer.concat([header, body, footer]);
 }
@@ -31,7 +32,8 @@ function buildPdfBuffer(): Buffer {
 
 function buildZipBuffer(): Buffer {
     const header = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]);
-    const body = Buffer.alloc(4096, 0xcc);
+    const body = Buffer.alloc(4096);
+    for (let i = 0; i < body.length; i++) body[i] = (i * 31) % 256;
     const footer = Buffer.from([0x50, 0x4b, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);

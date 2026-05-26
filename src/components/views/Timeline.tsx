@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ZoomIn, ZoomOut, Filter, Clock, Globe, HardDrive, User, Terminal, Loader2 } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { timelineApi } from '../../api/timeline.api';
+import { useCase } from '../../context/CaseContext';
 import type { LucideIcon } from 'lucide-react';
 
 type EventType = 'all' | 'file' | 'network' | 'auth' | 'process' | 'usb';
@@ -40,41 +41,70 @@ interface TimelineEvent {
     notes?: string;
 }
 
+const normalizeTimelineType = (value: string): EventType => {
+    const t = (value || '').toLowerCase();
+    if (t === 'file' || t.includes('file')) return 'file';
+    if (t === 'network' || t.includes('network')) return 'network';
+    if (t === 'process' || t.includes('process')) return 'process';
+    if (t === 'usb' || t.includes('usb')) return 'usb';
+    if (t === 'authentication' || t === 'auth' || t.includes('login') || t.includes('auth')) return 'auth';
+    if (t === 'registry' || t.includes('registry')) return 'file';
+    if (t === 'system' || t.includes('system')) return 'process';
+    return 'file';
+};
+
 export default function Timeline() {
-    const { caseId } = useParams<{ caseId: string }>();
+    const { caseId: urlCaseId } = useParams<{ caseId: string }>();
+    const { selectedCaseId, setSelectedCaseId } = useCase();
+    const effectiveCaseId = urlCaseId || selectedCaseId;
+
     const [events, setEvents] = useState<TimelineEvent[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [filter, setFilter] = useState<EventType>('all');
     const [zoom, setZoom] = useState(1);
-    const [hovered, setHovered] = useState<number | null>(null);
+    const [hovered, setHovered] = useState<string | null>(null);
     const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
     const [editingNote, setEditingNote] = useState<string>('');
+
+    // Sync URL caseId to context (for sidebar/topbar awareness)
+    useEffect(() => {
+        if (urlCaseId && urlCaseId !== selectedCaseId) {
+            setSelectedCaseId(urlCaseId);
+        }
+    }, [urlCaseId]);
 
     useEffect(() => {
         let cancelled = false;
 
         const fetchTimeline = async () => {
-            if (!caseId) {
-                // No case selected — load empty state
+            if (!effectiveCaseId) {
                 setLoading(false);
                 return;
             }
             try {
-                const data = await timelineApi.getByCaseId(caseId);
+                setLoading(true);
+                setError('');
+                const data = await timelineApi.getByCaseId(effectiveCaseId);
                 if (cancelled) return;
-                const list = Array.isArray(data) ? data : (data?.data ?? []);
+                const list = Array.isArray(data) ? data : (data?.events ?? data?.data ?? []);
                 const mapped: TimelineEvent[] = list.map((e: any, i: number) => ({
                     id: e.id ?? i + 1,
                     time: e.timestamp ?? e.time ?? e.createdAt ?? '—',
-                    type: (e.type ?? e.category ?? 'file').toLowerCase(),
+                    type: normalizeTimelineType(e.type ?? e.category ?? 'file'),
                     label: e.label ?? e.title ?? e.description ?? e.action ?? '—',
-                    detail: e.detail ?? e.metadata ?? e.details ?? '—',
+                    detail: e.detail ?? e.targetObject ?? e.source ?? e.metadata ?? e.details ?? '—',
                     notes: e.notes || undefined,
                 }));
                 setEvents(mapped);
-            } catch (err: unknown) {
-                if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load timeline');
+            } catch (err: any) {
+                if (cancelled) return;
+                // 404 means no data yet — not an error
+                if (err?.response?.status === 404) {
+                    setEvents([]);
+                } else {
+                    setError(err instanceof Error ? err.message : 'Failed to load timeline');
+                }
             } finally {
                 if (!cancelled) setLoading(false);
             }
@@ -82,7 +112,7 @@ export default function Timeline() {
 
         fetchTimeline();
         return () => { cancelled = true; };
-    }, [caseId]);
+    }, [effectiveCaseId]);
 
     const filtered = events.filter(e => filter === 'all' || e.type === filter);
 
@@ -107,6 +137,17 @@ export default function Timeline() {
         }
     });
 
+    if (!effectiveCaseId) {
+        return (
+            <div className="h-full flex flex-col overflow-hidden p-4 space-y-4 relative">
+                <div className="flex-1 flex flex-col items-center justify-center space-y-4">
+                    <h2 className="text-xl font-bold text-text-primary mono">No Case Selected</h2>
+                    <p className="text-text-muted text-sm mono">Please select a case to view timeline data</p>
+                </div>
+            </div>
+        );
+    }
+
     if (loading) {
         return (
             <div className="h-full flex flex-col items-center justify-center space-y-4">
@@ -127,9 +168,9 @@ export default function Timeline() {
     }
 
     const handleSaveNote = async () => {
-        if (!caseId || !selectedEventId) return;
+        if (!effectiveCaseId || !selectedEventId) return;
         try {
-            await timelineApi.updateNote(caseId, selectedEventId, editingNote);
+            await timelineApi.updateNote(effectiveCaseId, selectedEventId, editingNote);
             setEvents(prev => prev.map(ev => String(ev.id) === selectedEventId ? { ...ev, notes: editingNote } : ev));
             setSelectedEventId(null);
             setEditingNote('');
@@ -221,11 +262,11 @@ export default function Timeline() {
                                     key={e.id}
                                     className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-transform hover:scale-150"
                                     style={{ left: `${Math.max(0, Math.min(100, pct))}%`, top: '50%' }}
-                                    onMouseEnter={() => setHovered(e.id as number)}
+                                    onMouseEnter={() => setHovered(String(e.id))}
                                     onMouseLeave={() => setHovered(null)}
                                 >
                                     <div className="w-2.5 h-2.5 rounded-full border" style={{ background: style.dot, borderColor: style.border, boxShadow: `0 0 6px ${style.dot}60` }} />
-                                    {hovered === e.id && (
+                                    {hovered === String(e.id) && (
                                         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 w-48 p-2 rounded-sm text-[10px] border shadow-xl whitespace-normal"
                                             style={{ background: '#1D2128', borderColor: style.border, color: '#E6E8EB', transform: `scaleX(${1 / zoom})` }}>
                                             <div className="font-semibold mono mb-0.5" style={{ color: style.text }}>{e.label}</div>
@@ -272,7 +313,7 @@ export default function Timeline() {
                                 <div className="flex items-center gap-2 text-[10px] mono">
                                     <button
                                         onClick={() => {
-                                            setSelectedEventId(e.id as string);
+                                            setSelectedEventId(String(e.id));
                                             setEditingNote(e.notes || '');
                                         }}
                                         className="text-accent-cyan hover:underline truncate max-w-[120px]"

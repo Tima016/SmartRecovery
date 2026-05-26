@@ -2,11 +2,18 @@ import { apiClient } from './client';
 
 export const usersApi = {
     getAll: async () => {
-        const response = await apiClient.get('/users');
-        return response.data;
+        return apiClient.get('/users');
+    },
+    getById: async (id: string) => {
+        return apiClient.get(`/users/${id}`);
     },
     update: async (id: string, data: any) => {
-        const response = await apiClient.patch(`/users/${id}`, data);
-        return response.data;
-    }
+        return apiClient.patch(`/users/${id}`, data);
+    },
+    deactivate: async (id: string) => {
+        return apiClient.patch(`/users/${id}/deactivate`);
+    },
+    activate: async (id: string) => {
+        return apiClient.patch(`/users/${id}/activate`);
+    },
 };

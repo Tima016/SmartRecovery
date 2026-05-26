@@ -97,11 +97,14 @@ services:
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
       MINIO_USE_SSL: "false"
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_EVIDENCE_BUCKET: dfip-evidence
       MINIO_REPORTS_BUCKET: dfip-reports
       REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379
+      JWT_ACCESS_SECRET: dfip_access_secret_key_for_forensic_platform_2026
+      JWT_REFRESH_SECRET: dfip_refresh_secret_key_for_forensic_platform_2026
+      ENCRYPTION_KEY: d0af678c38a31fcdf78df681eb96edb8d7862098cb7b4dc3a720c9b0c265ab1f
 
     ports:
       - "5000:5000"
@@ -138,9 +141,9 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      ENCRYPTION_KEY: d0af678c38a31fcdf78df681eb96edb8d7862098cb7b4dc3a720c9b0c265ab1f
     command: [ "node", "dist/src/workers/imaging.worker.js" ]
     depends_on:
       db:
@@ -167,9 +170,9 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      ENCRYPTION_KEY: d0af678c38a31fcdf78df681eb96edb8d7862098cb7b4dc3a720c9b0c265ab1f
     command: [ "node", "dist/src/workers/forensic-pipeline.worker.js" ]
     depends_on:
       db:

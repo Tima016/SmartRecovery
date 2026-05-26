@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, FileText, Image as ImageIcon, Loader2 } from 'lucide-react';
 import { filesystemApi } from '../../api/filesystem.api';
+import { TOKEN_KEY } from '../../api/client';
 
 interface FilePreviewModalProps {
     isOpen: boolean;
@@ -30,7 +31,7 @@ export default function FilePreviewModal({ isOpen, onClose, caseId, fileId, file
                 const url = filesystemApi.getPreviewUrl(caseId, fileId);
                 // Note: The apiClient generally has an interceptor for tokens. 
                 // Since this is a direct fetch for a blob, we must include the token.
-                const token = localStorage.getItem('dfip_token');
+                const token = localStorage.getItem(TOKEN_KEY);
 
                 const response = await fetch(url, {
                     headers: token ? { 'Authorization': `Bearer ${token}` } : {}

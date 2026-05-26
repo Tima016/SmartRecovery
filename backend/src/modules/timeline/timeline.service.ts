@@ -60,7 +60,7 @@ export class TimelineService {
     }
 
     async updateNote(caseId: string, eventId: string, notes: string) {
-        const event = await this.prisma.timelineEvent.findUnique({ where: { id: eventId, caseId } });
+        const event = await this.prisma.timelineEvent.findFirst({ where: { id: eventId, caseId } });
         if (!event) throw new NotFoundException(`Timeline event ${eventId} not found in case ${caseId}`);
         return this.prisma.timelineEvent.update({ where: { id: eventId }, data: { notes } });
     }
@@ -72,10 +72,9 @@ export class TimelineService {
         for (const artifact of artifacts) {
             const entries = this.extractEntries(artifact.type as any, artifact.data);
             for (const entry of entries) {
-                await this.prisma.timelineEvent.upsert({
-                    where: { id: uuidv4() },
-                    update: {},
-                    create: {
+                if (isNaN(entry.timestamp.getTime())) continue;
+                await this.prisma.timelineEvent.create({
+                    data: {
                         id: uuidv4(),
                         caseId,
                         type: entry.type,

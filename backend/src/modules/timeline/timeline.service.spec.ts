@@ -9,12 +9,15 @@ import { TimelineService } from '../../modules/timeline/timeline.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { TimelineEventType } from '@prisma/client';
 
+jest.mock('uuid', () => ({
+    v4: () => 'test-uuid',
+}));
+
 const mockPrisma = {
     case: { findUnique: jest.fn() },
     timelineEvent: {
         findMany: jest.fn(),
         create: jest.fn(),
-        upsert: jest.fn(),
         count: jest.fn(),
     },
     artifact: { findMany: jest.fn() },
@@ -86,15 +89,15 @@ describe('TimelineService', () => {
                     },
                 },
             ]);
-            mockPrisma.timelineEvent.upsert.mockResolvedValue({});
+            mockPrisma.timelineEvent.create.mockResolvedValue({});
 
             const result = await service.synthesizeFromArtifacts('case-3', 'user-1');
             expect(result.created).toBe(2);
             // Mega URL should get high correlation score
-            const megaCall = mockPrisma.timelineEvent.upsert.mock.calls.find(
-                (call) => call[0].create.targetObject?.includes('mega'),
+            const megaCall = mockPrisma.timelineEvent.create.mock.calls.find(
+                (call) => call[0].data.targetObject?.includes('mega'),
             );
-            expect(megaCall[0].create.correlationScore).toBeGreaterThanOrEqual(80);
+            expect(megaCall[0].data.correlationScore).toBeGreaterThanOrEqual(80);
         });
 
         it('should synthesize USB_LOG entries into USB events', async () => {
@@ -109,12 +112,12 @@ describe('TimelineService', () => {
                     },
                 },
             ]);
-            mockPrisma.timelineEvent.upsert.mockResolvedValue({});
+            mockPrisma.timelineEvent.create.mockResolvedValue({});
 
             const result = await service.synthesizeFromArtifacts('case-4', 'user-1');
             expect(result.created).toBe(1);
-            const usbCall = mockPrisma.timelineEvent.upsert.mock.calls[0];
-            expect(usbCall[0].create.type).toBe(TimelineEventType.USB);
+            const usbCall = mockPrisma.timelineEvent.create.mock.calls[0];
+            expect(usbCall[0].data.type).toBe(TimelineEventType.USB);
         });
 
         it('should assign high correlation score to suspicious PREFETCH files', async () => {
@@ -130,17 +133,17 @@ describe('TimelineService', () => {
                     },
                 },
             ]);
-            mockPrisma.timelineEvent.upsert.mockResolvedValue({});
+            mockPrisma.timelineEvent.create.mockResolvedValue({});
 
             await service.synthesizeFromArtifacts('case-5', 'user-1');
-            const rshellCall = mockPrisma.timelineEvent.upsert.mock.calls.find(
-                (call) => call[0].create.targetObject?.includes('RSHELL'),
+            const rshellCall = mockPrisma.timelineEvent.create.mock.calls.find(
+                (call) => call[0].data.targetObject?.includes('RSHELL'),
             );
-            const notepadCall = mockPrisma.timelineEvent.upsert.mock.calls.find(
-                (call) => call[0].create.targetObject?.includes('NOTEPAD'),
+            const notepadCall = mockPrisma.timelineEvent.create.mock.calls.find(
+                (call) => call[0].data.targetObject?.includes('NOTEPAD'),
             );
-            expect(rshellCall[0].create.correlationScore).toBeGreaterThanOrEqual(85);
-            expect(notepadCall[0].create.correlationScore).toBeLessThan(50);
+            expect(rshellCall[0].data.correlationScore).toBeGreaterThanOrEqual(85);
+            expect(notepadCall[0].data.correlationScore).toBeLessThan(50);
         });
     });
 });

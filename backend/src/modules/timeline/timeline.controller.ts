@@ -20,7 +20,7 @@ export class TimelineController {
     ) { }
 
     @Get()
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Get forensic timeline for a case' })
     @ApiQuery({ name: 'type', required: false, enum: TimelineEventType })
     @ApiQuery({ name: 'from', required: false })
@@ -32,21 +32,21 @@ export class TimelineController {
     }
 
     @Get('clusters')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Get activity clusters for timeline visualisation' })
     getClusters(@Param('caseId') caseId: string) {
         return this.timelineService.getClusters(caseId);
     }
 
     @Get('suspicious-events')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Get suspicious events detected for a case' })
     getSuspiciousEvents(@Param('caseId') caseId: string) {
         return this.detectionService.getSuspiciousEvents(caseId);
     }
 
     @Post('event')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Manually add a timeline event to a case' })
     addEvent(
         @Param('caseId') caseId: string,
@@ -57,28 +57,28 @@ export class TimelineController {
     }
 
     @Post('synthesize')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Auto-synthesize timeline events from extracted artifacts' })
     synthesize(@Param('caseId') caseId: string, @GetUser('id') userId: string) {
         return this.timelineService.synthesizeFromArtifacts(caseId, userId);
     }
 
     @Post('cluster')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Run timeline clustering and persist results' })
     clusterTimeline(@Param('caseId') caseId: string) {
         return this.timelineService.clusterTimeline(caseId);
     }
 
     @Post('detect')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Run anomaly detection rules on case timeline' })
     detect(@Param('caseId') caseId: string) {
         return this.detectionService.runDetection(caseId);
     }
 
     @Post(':eventId/notes')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Add or update investigator note on a timeline event' })
     updateNote(
         @Param('caseId') caseId: string,

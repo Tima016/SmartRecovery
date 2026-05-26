@@ -14,14 +14,14 @@ export class CustodyController {
     constructor(private readonly custodyService: CustodyService) { }
 
     @Get(':evidenceId/custody')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Get full chain of custody for evidence' })
     getChain(@Param('evidenceId') evidenceId: string) {
         return this.custodyService.getChain(evidenceId);
     }
 
     @Get(':evidenceId/custody/verify')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Verify chain of custody integrity (tamper detection)' })
     verifyChain(@Param('evidenceId') evidenceId: string) {
         return this.custodyService.verifyChain(evidenceId);

@@ -44,4 +44,10 @@ export const evidenceApi = {
         const response = await apiClient.patch(`/evidence/${id}/verify`, { notes });
         return response.data;
     },
+
+    /** Ingest evidence from a server-local file path */
+    ingestLocalPath: async (caseId: string, filePath: string) => {
+        const response = await apiClient.post(`/cases/${caseId}/evidence/ingest-local`, { filePath });
+        return response.data;
+    },
 };

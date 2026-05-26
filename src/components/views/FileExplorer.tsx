@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Folder, FolderOpen, File, HardDrive, Search, SearchSlash, AlertTriangle, Loader2, ChevronRight, ChevronDown } from 'lucide-react';
 import { filesystemApi } from '../../api/filesystem.api';
 import FilePreviewModal from '../modals/FilePreviewModal';
@@ -18,6 +18,21 @@ interface FSEntry {
     isExpanded?: boolean;
     isLoading?: boolean;
 }
+
+const normalizeEntries = (items: any[]): FSEntry[] => {
+    return (items || []).map((entry: any) => ({
+        id: String(entry.id),
+        fileName: entry.fileName ?? entry.name ?? 'unknown',
+        filePath: entry.filePath ?? entry.path ?? '/',
+        isDirectory: Boolean(entry.isDirectory),
+        isDeleted: Boolean(entry.isDeleted),
+        sizeBytes: String(entry.sizeBytes ?? '0'),
+        createdDate: entry.createdDate ?? entry.createdAt,
+        modifiedDate: entry.modifiedDate ?? entry.modifiedAt,
+        permissions: entry.permissions ?? entry.perms,
+        children: Array.isArray(entry.children) ? normalizeEntries(entry.children) : undefined,
+    }));
+};
 
 const FileSystemNode = ({
     node,
@@ -101,6 +116,7 @@ const FileSystemNode = ({
 
 export default function FileExplorer() {
     const { caseId } = useParams<{ caseId: string }>();
+    const navigate = useNavigate();
     const [tree, setTree] = useState<FSEntry[]>([]);
     const [deletedFiles, setDeletedFiles] = useState<FSEntry[]>([]);
     const [loading, setLoading] = useState(true);
@@ -122,8 +138,8 @@ export default function FileExplorer() {
             try {
                 const res = await filesystemApi.getTree(caseId);
                 if (!active) return;
-                const data = Array.isArray(res) ? res : (res?.data ?? []);
-                setTree(data);
+                const data = Array.isArray(res) ? res : (res?.entries ?? res?.data ?? []);
+                setTree(normalizeEntries(data));
             } catch (err: any) {
                 if (active) setError(err.message || 'Failed to load filesystem');
             } finally {
@@ -141,8 +157,8 @@ export default function FileExplorer() {
         setLoading(true);
         try {
             const res = await filesystemApi.getDeleted(caseId);
-            const data = Array.isArray(res) ? res : (res?.data ?? []);
-            setDeletedFiles(data);
+            const data = Array.isArray(res) ? res : (res?.entries ?? res?.data ?? []);
+            setDeletedFiles(normalizeEntries(data));
         } catch (err: any) {
             setError(err.message || 'Failed to load deleted files');
         } finally {
@@ -156,7 +172,7 @@ export default function FileExplorer() {
         setError('');
         try {
             const res = await filesystemApi.advancedSearch(caseId, searchParams);
-            setSearchResults(res.entries || []);
+            setSearchResults(normalizeEntries(res?.entries || []));
         } catch (err: any) {
             setError(err.message || 'Search failed');
         } finally {
@@ -187,7 +203,7 @@ export default function FileExplorer() {
             if (needsLoad) {
                 try {
                     const res = await filesystemApi.getTree(caseId, id);
-                    const children = Array.isArray(res) ? res : (res?.data ?? []);
+                    const children = normalizeEntries(Array.isArray(res) ? res : (res?.entries ?? res?.data ?? []));
                     setTree(prev => updateTree(prev, id, node => ({ ...node, children, isLoading: false })));
                 } catch {
                     setTree(prev => updateTree(prev, id, node => ({ ...node, isLoading: false })));
@@ -410,7 +426,7 @@ export default function FileExplorer() {
                                     </button>
                                 )}
                                 <button
-                                    onClick={() => alert('Hex Viewer not yet implemented (Task 3)')}
+                                    onClick={() => navigate(`/cases/${caseId}/hex`)}
                                     className="w-full py-2 bg-bg-elevated hover:bg-bg-border border border-bg-border text-text-primary font-medium flex items-center justify-center gap-2 rounded-sm transition-colors"
                                 >
                                     <Search className="w-3.5 h-3.5" />

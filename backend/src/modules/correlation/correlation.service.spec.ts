@@ -9,6 +9,10 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { CorrelationService } from '../../modules/correlation/correlation.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
+jest.mock('uuid', () => ({
+    v4: () => 'test-uuid',
+}));
+
 const mockPrisma = {
     case: { findUnique: jest.fn() },
     artifact: { findMany: jest.fn() },

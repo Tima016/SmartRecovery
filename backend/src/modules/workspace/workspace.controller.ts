@@ -11,13 +11,13 @@ export class WorkspaceController {
     constructor(private readonly workspaceService: WorkspaceService) { }
 
     @Get()
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async getBookmarks(@Req() req: any) {
         return this.workspaceService.getBookmarks(req.user.id);
     }
 
     @Post()
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async addBookmark(
         @Body() body: { entityType: string; entityId: string; note?: string },
         @Req() req: any,
@@ -32,7 +32,7 @@ export class WorkspaceController {
     }
 
     @Patch(':id')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async updateNote(
         @Param('id') id: string,
         @Body() body: { note: string },
@@ -42,7 +42,7 @@ export class WorkspaceController {
     }
 
     @Delete(':id')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async removeBookmark(@Param('id') id: string, @Req() req: any) {
         return this.workspaceService.removeBookmark(id, req.user.id, req.ip);
     }

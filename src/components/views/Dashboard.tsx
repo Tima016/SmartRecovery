@@ -20,6 +20,7 @@ import {
 import { casesApi } from '../../api/cases.api';
 import { auditApi } from '../../api/audit.api';
 import { timelineApi } from '../../api/timeline.api';
+import { useAuth } from '../../context/AuthContext';
 import { Skeleton } from '../ui/Skeleton';
 
 // ─── Types ────────────────────────────────────────────────────────────
@@ -69,6 +70,7 @@ const levelColor: Record<string, string> = {
 };
 
 export default function Dashboard() {
+    const { user } = useAuth();
     const [data, setData] = useState<DashboardData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -92,9 +94,10 @@ export default function Dashboard() {
 
         const fetchDashboard = async () => {
             try {
-                const [casesRes, auditRes] = await Promise.allSettled([
+                const [casesRes, auditRes, dashStatsRes] = await Promise.allSettled([
                     casesApi.getAll(),
-                    auditApi.getLogs({ limit: 8 }),
+                    user?.role === 'ADMIN' ? auditApi.getLogs({ limit: 8 }) : Promise.resolve([]),
+                    casesApi.getDashboardStats(),
                 ]);
 
                 if (cancelled) return;
@@ -102,22 +105,23 @@ export default function Dashboard() {
                 // Build stats from real case data
                 const casesRaw = casesRes.status === 'fulfilled' ? casesRes.value : {};
                 const caseList = Array.isArray(casesRaw) ? casesRaw : (casesRaw?.data ?? []);
-                const processingStatuses = ['IMAGING', 'HASHING', 'SCANNING', 'ANALYZING', 'CREATED'];
-                const activeCases = caseList.filter((c: any) => processingStatuses.includes(c.status));
 
                 const auditRaw = auditRes.status === 'fulfilled' ? auditRes.value : {};
                 const logList = Array.isArray(auditRaw) ? auditRaw : (auditRaw?.data ?? []);
 
-                const totalEvidence = caseList.reduce((acc: number, c: any) => acc + (c.evidenceCount ?? c.files ?? 0), 0);
-                const recoveredFallback = caseList.filter((c: any) => ['READY', 'CLOSED'].includes(c.status)).length * 1520;
-                const indexedFallback = totalEvidence * 420;
+                // Use real dashboard stats if available
+                const dashStats = dashStatsRes.status === 'fulfilled' ? dashStatsRes.value : null;
+                const totalCases = dashStats?.totalCases ?? caseList.length;
+                const activeCases = dashStats?.activeCases ?? caseList.filter((c: any) => ['IMAGING', 'HASHING', 'SCANNING', 'ANALYZING', 'CREATED'].includes(c.status)).length;
+                const totalEvidence = dashStats?.totalEvidence ?? caseList.reduce((acc: number, c: any) => acc + (c._count?.evidence ?? c.evidenceCount ?? 0), 0);
+                const totalCarved = dashStats?.totalCarved ?? 0;
 
                 const stats: StatCard[] = [
-                    { label: 'Cases Registered', value: String(caseList.length || 0), sub: 'System total' },
-                    { label: 'Files Recovered', value: String(recoveredFallback || '—'), sub: recoveredFallback ? 'Extracted' : 'pending' },
-                    { label: 'Active Tasks', value: String(activeCases.length), sub: 'Processing' },
+                    { label: 'Cases Registered', value: String(totalCases), sub: 'System total' },
+                    { label: 'Files Recovered', value: String(totalCarved || '—'), sub: totalCarved ? 'Extracted' : 'pending' },
+                    { label: 'Active Tasks', value: String(activeCases), sub: 'Processing' },
                     { label: 'Evidence Items', value: String(totalEvidence || '—'), sub: totalEvidence ? 'Catalogued' : 'pending' },
-                    { label: 'Indexed Items', value: String(indexedFallback || '—'), sub: indexedFallback ? 'Searchable' : 'pending' },
+                    { label: 'Indexed Items', value: String(totalEvidence > 0 ? totalEvidence * 420 : '—'), sub: totalEvidence ? 'Searchable' : 'pending' },
                     { label: 'Avg. Entropy', value: '4.82', sub: 'bits/byte (Normal)' },
                 ];
 
@@ -145,6 +149,11 @@ export default function Dashboard() {
                 ];
 
                 setData({ stats, timeline, activityLog, systemStatus });
+
+                // Extract first caseId for alert panel (avoids duplicate API call)
+                if (caseList.length > 0 && caseList[0]?.id) {
+                    setAlertCaseId(caseList[0].id);
+                }
             } catch (err: unknown) {
                 if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load dashboard');
             } finally {
@@ -154,14 +163,6 @@ export default function Dashboard() {
 
         fetchDashboard();
         return () => { cancelled = true; };
-    }, []);
-
-    // Fetch suspicious events for most recent case
-    useEffect(() => {
-        casesApi.getAll().then((res: any) => {
-            const list = Array.isArray(res) ? res : (res?.data ?? []);
-            if (list[0]?.id) setAlertCaseId(list[0].id);
-        }).catch(() => { });
     }, []);
 
     useEffect(() => {

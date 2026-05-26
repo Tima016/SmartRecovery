@@ -13,9 +13,14 @@ import {
     Cpu,
     Briefcase,
 } from 'lucide-react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from '../../i18n/useTranslation';
+import { useCase } from '../../context/CaseContext';
+import { useAuth } from '../../context/AuthContext';
+import { toast } from 'react-hot-toast';
 
+/** Pages that require a caseId in the URL */
+const CASE_SCOPED_PAGES = new Set(['recovery', 'artifacts', 'timeline', 'visualization', 'reports']);
 
 const navItems: { id: string; icon: React.ElementType; labelKey: string }[] = [
     { id: 'dashboard', icon: LayoutDashboard, labelKey: 'nav.dashboard' },
@@ -33,6 +38,18 @@ const navItems: { id: string; icon: React.ElementType; labelKey: string }[] = [
 export default function Sidebar() {
     const { t } = useTranslation();
     const location = useLocation();
+    const navigate = useNavigate();
+    const { selectedCaseId } = useCase();
+    const { user } = useAuth();
+    const isAdmin = user?.role === 'ADMIN';
+
+    const navigateTo = (page: string) => {
+        if (!selectedCaseId) {
+            navigate('/cases');
+            return;
+        }
+        navigate(`/cases/${selectedCaseId}/${page}`);
+    };
 
     return (
         <aside
@@ -93,41 +110,48 @@ export default function Sidebar() {
             {/* Nav */}
             <nav className="flex-1 py-2 overflow-y-auto">
                 {navItems.map(({ id, icon: Icon, labelKey }) => {
-                    let to = `/${id}`;
-                    let isActive = location.pathname.startsWith(to);
+                    const isCaseScoped = CASE_SCOPED_PAGES.has(id);
+                    const disabled = isCaseScoped && !selectedCaseId;
 
+                    // Detect the active sub-page from case-scoped paths like /cases/:id/timeline
+                    const segments = location.pathname.split('/').filter(Boolean);
+                    const caseSubPage = segments[0] === 'cases' && segments.length >= 3 ? segments[2] : null;
+
+                    let isActive: boolean;
                     if (id === 'dashboard') {
-                        to = '/dashboard';
                         isActive = location.pathname === '/dashboard';
+                    } else if (id === 'cases') {
+                        // Active only for /cases and /cases/:id (not /cases/:id/timeline etc.)
+                        isActive = segments[0] === 'cases' && !caseSubPage;
+                    } else if (isCaseScoped) {
+                        // Match exactly the sub-page segment
+                        isActive = caseSubPage === id;
+                    } else {
+                        isActive = location.pathname.startsWith(`/${id}`);
                     }
 
-                    if (id === 'cases') {
-                        to = '/cases';
-                    }
+                    const handleClick = (e: React.MouseEvent) => {
+                        if (disabled) {
+                            e.preventDefault();
+                            toast.error('Please select a case first', { id: 'case-required' });
+                            return;
+                        }
+                        if (isCaseScoped) {
+                            e.preventDefault();
+                            navigateTo(id);
+                        }
+                    };
+
+                    const to = isCaseScoped ? (selectedCaseId ? `/cases/${selectedCaseId}/${id}` : '#') : `/${id}`;
 
                     return (
                         <NavLink
                             to={to}
                             key={id}
-                            className={({ isActive }) =>
-                                `w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-all duration-150 group relative ${isActive
-                                    ? 'nav-active text-accent-cyan'
-                                    : 'border-l-2 border-transparent text-text-secondary'
-                                }`
-                            }
-                            style={({ isActive }) => (!isActive ? { color: 'var(--text-secondary)' } : undefined)}
-                            onMouseEnter={e => {
-                                if (!isActive) {
-                                    (e.currentTarget as HTMLAnchorElement).style.color = 'var(--text-primary)';
-                                    (e.currentTarget as HTMLAnchorElement).style.background = 'var(--border)';
-                                }
-                            }}
-                            onMouseLeave={e => {
-                                if (!isActive) {
-                                    (e.currentTarget as HTMLAnchorElement).style.color = 'var(--text-secondary)';
-                                    (e.currentTarget as HTMLAnchorElement).style.background = '';
-                                }
-                            }}
+                            onClick={handleClick}
+                            className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-all duration-150 group relative ${
+                                isActive ? 'nav-active text-accent-cyan' : 'border-l-2 border-transparent text-text-secondary'
+                            } ${disabled ? 'opacity-50 !cursor-not-allowed' : 'hover:text-text-primary hover:bg-bg-border'}`}
                         >
                             <Icon className={`w-4 h-4 flex-shrink-0 transition-colors ${isActive ? 'text-accent-cyan' : 'text-text-muted group-hover:text-text-secondary'
                                 }`} />
@@ -137,6 +161,26 @@ export default function Sidebar() {
                     );
                 })}
             </nav>
+
+            {/* Admin Panel Link */}
+            {isAdmin && (
+                <div className="px-2 pb-2">
+                    <NavLink
+                        to="/admin"
+                        className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-all duration-150 group relative rounded-sm ${
+                            location.pathname === '/admin'
+                                ? 'bg-amber-500/10 text-amber-400 border border-amber-500/25'
+                                : 'text-text-secondary hover:text-amber-400 hover:bg-amber-500/5 border border-transparent'
+                        }`}
+                    >
+                        <Shield className={`w-4 h-4 flex-shrink-0 transition-colors ${
+                            location.pathname === '/admin' ? 'text-amber-400' : 'text-text-muted group-hover:text-amber-400'
+                        }`} />
+                        <span className="font-medium tracking-tight">Admin Panel</span>
+                        {location.pathname === '/admin' && <ChevronRight className="w-3 h-3 ml-auto text-amber-400 opacity-60" />}
+                    </NavLink>
+                </div>
+            )}
 
             {/* Bottom status */}
             <div

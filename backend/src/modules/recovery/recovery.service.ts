@@ -501,6 +501,68 @@ export class RecoveryService implements OnModuleDestroy {
         return { totalFragments: serializedFragments.length, groupCount: Object.keys(groups).length, groups };
     }
 
+    async getRecoveredFilePayload(caseId: string, fileId: string, maxBytes?: number): Promise<{
+        buffer: Buffer;
+        contentType: string;
+        filename: string;
+        truncated: boolean;
+        warning?: string;
+    }> {
+        const recoveredFile = await this.prisma.recoveredFile.findFirst({
+            where: { id: fileId, caseId },
+            include: {
+                evidence: true,
+                fragments: {
+                    select: {
+                        id: true,
+                        offsetStart: true,
+                        offsetEnd: true,
+                        recoveredFileId: true,
+                        fragmentGroup: true,
+                    },
+                    orderBy: { offsetStart: 'asc' },
+                },
+            },
+        });
+
+        if (!recoveredFile) {
+            throw new NotFoundException(`Recovered file ${fileId} not found in case ${caseId}`);
+        }
+
+        const fullBuffer = await this.resolveRecoveredFileBuffer(recoveredFile);
+        const isBinary = this.isBinaryContent(recoveredFile.mimeType ?? '');
+        const contentType = recoveredFile.mimeType ?? (isBinary ? 'application/octet-stream' : 'text/plain; charset=utf-8');
+        const riskyContent = recoveredFile.method !== RecoveryMethod.METADATA
+            && (
+                Number(recoveredFile.confidence ?? 0) < 95
+                || !recoveredFile.hasValidHeader
+                || (!recoveredFile.hasValidFooter && recoveredFile.method === RecoveryMethod.CARVING)
+            );
+
+        const filename = this.safeFilename(recoveredFile.filename, recoveredFile.mimeType, riskyContent);
+        const warning = riskyContent
+            ? 'Recovered file may be partial or corrupted. Validate header/footer and confidence before use.'
+            : undefined;
+
+        if (typeof maxBytes === 'number' && maxBytes > 0 && fullBuffer.length > maxBytes) {
+            return {
+                buffer: fullBuffer.subarray(0, maxBytes),
+                contentType,
+                filename,
+                truncated: true,
+                warning,
+            };
+        }
+
+        return {
+            buffer: fullBuffer,
+            contentType,
+            filename,
+            truncated: false,
+            warning,
+        };
+    }
+
     // ──────────────────────────────────────────────────────────────
     // EVIDENCE DATA ACCESS
     // ──────────────────────────────────────────────────────────────
@@ -556,5 +618,106 @@ export class RecoveryService implements OnModuleDestroy {
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
         };
         return map[mime] ?? 'bin';
+    }
+
+    private async resolveRecoveredFileBuffer(recoveredFile: any): Promise<Buffer> {
+        if (recoveredFile.storageBucket && recoveredFile.storageKey) {
+            try {
+                return await this.minioService.getBuffer(recoveredFile.storageBucket, recoveredFile.storageKey);
+            } catch (error: any) {
+                this.logger.warn(
+                    `Failed to load recovered file from storage (${recoveredFile.storageBucket}/${recoveredFile.storageKey}): ${error.message}`,
+                );
+            }
+        }
+
+        if (!recoveredFile.evidence) {
+            return this.fallbackMetadataBuffer(recoveredFile);
+        }
+
+        const evidenceBuffer = await this.getEvidenceBuffer(recoveredFile.evidence);
+        if (evidenceBuffer.length === 0) {
+            return this.fallbackMetadataBuffer(recoveredFile);
+        }
+
+        if (recoveredFile.method === RecoveryMethod.CARVING) {
+            const start = Number(recoveredFile.offsetStart ?? 0);
+            const size = Number(recoveredFile.sizeBytes ?? 0);
+            const end = size > 0 ? start + size : Number(recoveredFile.offsetEnd ?? start);
+            return evidenceBuffer.subarray(Math.max(0, start), Math.min(evidenceBuffer.length, Math.max(start, end)));
+        }
+
+        if (recoveredFile.method === RecoveryMethod.FRAGMENT_LINK) {
+            const fragments = recoveredFile.fragments?.length > 0
+                ? recoveredFile.fragments
+                : await this.prisma.fragment.findMany({
+                    where: {
+                        caseId: recoveredFile.caseId,
+                        OR: [
+                            { recoveredFileId: recoveredFile.id },
+                            recoveredFile.fragmentGroup ? { fragmentGroup: recoveredFile.fragmentGroup } : undefined,
+                        ].filter(Boolean) as any,
+                    },
+                    orderBy: { offsetStart: 'asc' },
+                });
+
+            if (!fragments || fragments.length === 0) {
+                return this.fallbackMetadataBuffer(recoveredFile);
+            }
+
+            const chunkBuffers: Buffer[] = [];
+            for (const fragment of fragments) {
+                const start = Number(fragment.offsetStart ?? 0);
+                const end = Number(fragment.offsetEnd ?? start);
+                if (start < evidenceBuffer.length && end > start) {
+                    chunkBuffers.push(evidenceBuffer.subarray(start, Math.min(end, evidenceBuffer.length)));
+                }
+            }
+            if (chunkBuffers.length > 0) {
+                return Buffer.concat(chunkBuffers);
+            }
+        }
+
+        if (recoveredFile.method === RecoveryMethod.METADATA) {
+            return this.fallbackMetadataBuffer(recoveredFile);
+        }
+
+        return this.fallbackMetadataBuffer(recoveredFile);
+    }
+
+    private fallbackMetadataBuffer(recoveredFile: any): Buffer {
+        return Buffer.from(JSON.stringify({
+            id: recoveredFile.id,
+            filename: recoveredFile.filename,
+            method: recoveredFile.method,
+            status: recoveredFile.status,
+            confidence: recoveredFile.confidence,
+            mimeType: recoveredFile.mimeType,
+            sizeBytes: recoveredFile.sizeBytes?.toString?.() ?? '0',
+            offsetStart: recoveredFile.offsetStart?.toString?.() ?? '0',
+            offsetEnd: recoveredFile.offsetEnd?.toString?.() ?? '0',
+            entropyScore: recoveredFile.entropyScore,
+            fragmentGroup: recoveredFile.fragmentGroup,
+            recoveredAt: recoveredFile.recoveredAt,
+        }, null, 2), 'utf-8');
+    }
+
+    private isBinaryContent(mimeType: string): boolean {
+        if (!mimeType) return true;
+        return !mimeType.startsWith('text/')
+            && !mimeType.includes('json')
+            && !mimeType.includes('xml')
+            && !mimeType.includes('javascript');
+    }
+
+    private safeFilename(filename: string, mimeType?: string | null, forceBinaryExt = false): string {
+        const sanitized = (filename || 'recovered_file').replace(/[^a-zA-Z0-9._-]/g, '_');
+        if (forceBinaryExt) {
+            const nameOnly = sanitized.includes('.') ? sanitized.slice(0, sanitized.lastIndexOf('.')) : sanitized;
+            return `${nameOnly || 'recovered_file'}.bin`;
+        }
+        if (sanitized.includes('.')) return sanitized;
+        if (mimeType) return `${sanitized}.${this.mimeToExt(mimeType)}`;
+        return sanitized;
     }
 }

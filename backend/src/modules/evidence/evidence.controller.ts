@@ -27,7 +27,7 @@ export class EvidenceController {
     constructor(private readonly evidenceService: EvidenceService) { }
 
     @Post('upload')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @RateLimit({ windowMs: 60_000, max: 5 })
     @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
     @ApiConsumes('multipart/form-data')
@@ -59,6 +59,19 @@ export class EvidenceController {
         return this.evidenceService.upload(caseId, file, description, userId, req.ip);
     }
 
+    @Post('ingest-local')
+    @Roles(UserRole.ADMIN, UserRole.USER)
+    @ApiOperation({ summary: 'Ingest evidence from a server-local file path (disk image)' })
+    @ApiBody({ schema: { type: 'object', properties: { filePath: { type: 'string' } } } })
+    async ingestLocal(
+        @Param('caseId') caseId: string,
+        @Body('filePath') filePath: string,
+        @GetUser('id') userId: string,
+        @Req() req: Request,
+    ) {
+        return this.evidenceService.ingestLocalPath(caseId, filePath, userId, req.ip);
+    }
+
     @Get()
     @ApiOperation({ summary: 'List all evidence for a case' })
     findAll(@Param('caseId') caseId: string) {
@@ -78,7 +91,7 @@ export class EvidenceController {
     }
 
     @Patch(':id/verify')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Mark evidence as verified' })
     verify(
         @Param('id') id: string,
@@ -87,6 +100,22 @@ export class EvidenceController {
         @Req() req: Request,
     ) {
         return this.evidenceService.verify(id, userId, dto.notes, req.ip);
+    }
+
+    @Get(':id/hex')
+    @ApiOperation({ summary: 'Get decoded hex payload at an offset for Hex Viewer' })
+    getHex(
+        @Param('id') id: string,
+        @Query('offset') offset: string,
+        @Query('length') length: string,
+    ) {
+        const parsedOffset = parseInt(offset ?? '0', 10);
+        const parsedLength = parseInt(length ?? '512', 10);
+        return this.evidenceService.getHexData(
+            id,
+            Number.isFinite(parsedOffset) ? parsedOffset : 0,
+            Number.isFinite(parsedLength) ? parsedLength : 512,
+        );
     }
 
     @Get(':id/sectors')
@@ -110,7 +139,7 @@ export class EvidenceController {
     }
 
     @Get(':id/download')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Download decrypted evidence file securely' })
     async download(
         @Param('id') id: string,

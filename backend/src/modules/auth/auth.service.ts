@@ -32,7 +32,7 @@ export class AuthService {
         if (existing) throw new ConflictException('Email already registered');
 
         const userCount = await this.prisma.user.count();
-        const role = userCount === 0 ? UserRole.ADMIN : (dto.role ?? UserRole.ANALYST);
+        const role = userCount === 0 ? UserRole.ADMIN : UserRole.USER;
 
         const rounds = this.configService.get<number>('BCRYPT_ROUNDS', 12);
         const passwordHash = await bcrypt.hash(dto.password, rounds);
@@ -45,7 +45,6 @@ export class AuthService {
                 firstName: dto.firstName,
                 lastName: dto.lastName,
                 role,
-                allowedIps: dto.allowedIps ?? [],
             },
         });
 
@@ -255,6 +254,29 @@ export class AuthService {
         });
 
         return { message: 'Password changed successfully. Please login again.' };
+    }
+
+    async getProfile(userId: string) {
+        const user = await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                role: true,
+                isActive: true,
+                isTwoFactorEnabled: true,
+                allowedIps: true,
+                lastLoginAt: true,
+                lastLoginIp: true,
+                createdAt: true,
+            },
+        });
+        if (!user) {
+            throw new UnauthorizedException('User not found');
+        }
+        return user;
     }
 
     // ─── Private helpers ──────────────────────────────────────────────

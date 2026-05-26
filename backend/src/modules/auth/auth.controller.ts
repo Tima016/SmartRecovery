@@ -70,8 +70,9 @@ export class AuthController {
     @UseGuards(JwtAuthGuard)
     @ApiBearerAuth('access-token')
     @ApiOperation({ summary: 'Get current authenticated user profile' })
-    async me(@GetUser() user: any) {
-        return { user };
+    async me(@GetUser('id') userId: string) {
+        const profile = await this.authService.getProfile(userId);
+        return { user: profile };
     }
 
     @Post('2fa/generate')

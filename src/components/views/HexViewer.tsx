@@ -26,8 +26,9 @@ export default function HexViewer() {
             try {
                 const res = await apiClient.get(`/cases/${caseId}/evidence`);
                 if (active) {
-                    setEvidenceItems(res.data);
-                    if (res.data.length > 0) setSelectedEvidence(res.data[0].id);
+                    const list = Array.isArray(res.data) ? res.data : (res.data?.data ?? []);
+                    setEvidenceItems(list);
+                    if (list.length > 0) setSelectedEvidence(list[0].id);
                 }
             } catch (err: any) {
                 if (active) setError(err.message || 'Failed to load evidence');

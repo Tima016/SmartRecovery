@@ -1,7 +1,7 @@
 import { Controller, Get, Patch, Body, Param, UseGuards, Delete } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
-import { IsString, IsEnum, IsOptional, IsArray } from 'class-validator';
+import { IsString, IsEnum, IsOptional, IsArray, IsBoolean } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -25,6 +25,11 @@ class UpdateUserDto {
     @IsEnum(UserRole)
     role?: UserRole;
 
+    @ApiPropertyOptional()
+    @IsOptional()
+    @IsBoolean()
+    isActive?: boolean;
+
     @ApiPropertyOptional({ type: [String] })
     @IsOptional()
     @IsArray()
@@ -40,8 +45,8 @@ export class UsersController {
     constructor(private readonly prisma: PrismaService) { }
 
     @Get()
-    @Roles(UserRole.ADMIN, UserRole.AUDITOR)
-    @ApiOperation({ summary: 'List all users (Admin/Auditor only)' })
+    @Roles(UserRole.ADMIN)
+    @ApiOperation({ summary: 'List all users (Admin only)' })
     async findAll() {
         return this.prisma.user.findMany({
             select: {
@@ -101,6 +106,17 @@ export class UsersController {
         return this.prisma.user.update({
             where: { id },
             data: { isActive: false, tokenVersion: { increment: 1 }, refreshTokenHash: null },
+            select: { id: true, email: true, isActive: true },
+        });
+    }
+
+    @Patch(':id/activate')
+    @Roles(UserRole.ADMIN)
+    @ApiOperation({ summary: 'Activate user account (Admin only)' })
+    async activate(@Param('id') id: string) {
+        return this.prisma.user.update({
+            where: { id },
+            data: { isActive: true },
             select: { id: true, email: true, isActive: true },
         });
     }

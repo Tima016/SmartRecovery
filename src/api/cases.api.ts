@@ -16,5 +16,9 @@ export const casesApi = {
     getSummary: async (id: string) => {
         const response = await apiClient.get(`/cases/${id}/summary`);
         return response.data;
+    },
+    getDashboardStats: async () => {
+        const response = await apiClient.get('/cases/dashboard/stats');
+        return response.data;
     }
 };

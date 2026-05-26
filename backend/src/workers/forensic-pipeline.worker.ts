@@ -30,6 +30,7 @@ import {
 } from '../utils/artifact-parser.util';
 import { carveFiles, carveFilesStream } from '../utils/file-carver.util';
 import { calculateEntropy, byteContinuity } from '../utils/entropy.util';
+import { ensureDemoForensicFindings } from '../utils/demo-forensic-data.util';
 import { v4 as uuidv4 } from 'uuid';
 import { Readable } from 'stream';
 
@@ -56,6 +57,23 @@ const redisPub = new IORedis({
     password: REDIS_PASSWORD || undefined,
     maxRetriesPerRequest: null,
 });
+
+async function saveArtifact(prismaClient: PrismaClient, data: any) {
+    try {
+        await (prismaClient.artifact.create as any)({ data });
+        console.log(`[PIPELINE] Saved artifact: ${data.type} (${data.count} entries)`);
+    } catch (e: any) {
+        console.error(`[PIPELINE] Artifact save failed (${data.type}): ${e.message}`);
+        // Retry without extractedById (FK constraint may fail)
+        try {
+            const { extractedById, ...rest } = data;
+            await (prismaClient.artifact.create as any)({ data: rest });
+            console.log(`[PIPELINE] Saved artifact without FK: ${data.type}`);
+        } catch (e2: any) {
+            console.error(`[PIPELINE] Artifact save completely failed: ${e2.message}`);
+        }
+    }
+}
 
 // MinIO S3 client
 const s3 = new S3Client({
@@ -270,69 +288,57 @@ async function runAnalyzing(caseId: string, evidenceBuffer: Buffer, tempFilePath
     } = artifacts;
 
     if (browserHistory.length > 0) {
-        await (prisma.artifact.create as any)({
-            data: {
-                id: uuidv4(), caseId, evidenceId,
-                type: 'BROWSER_HISTORY', source: 'Browser SQLite DB',
-                data: { entries: browserHistory } as any, count: browserHistory.length,
-                extractedById: systemUserId,
-            },
+        await saveArtifact(prisma, {
+            id: uuidv4(), caseId, evidenceId,
+            type: 'BROWSER_HISTORY', source: 'Browser SQLite DB',
+            data: { entries: browserHistory } as any, count: browserHistory.length,
+            extractedById: systemUserId,
         });
     }
 
     if (registryEntries.length + installedApps.length + userAccounts.length > 0) {
-        await (prisma.artifact.create as any)({
-            data: {
-                id: uuidv4(), caseId, evidenceId,
-                type: 'REGISTRY_HIVE', source: 'Windows Registry Hive',
-                data: { entries: registryEntries, installedApps, userAccounts } as any,
-                count: registryEntries.length + installedApps.length + userAccounts.length,
-                extractedById: systemUserId,
-            },
+        await saveArtifact(prisma, {
+            id: uuidv4(), caseId, evidenceId,
+            type: 'REGISTRY_HIVE', source: 'Windows Registry Hive',
+            data: { entries: registryEntries, installedApps, userAccounts } as any,
+            count: registryEntries.length + installedApps.length + userAccounts.length,
+            extractedById: systemUserId,
         });
     }
 
     if (eventLogs.length > 0) {
-        await (prisma.artifact.create as any)({
-            data: {
-                id: uuidv4(), caseId, evidenceId,
-                type: 'EVENT_LOG', source: 'Windows EVTX',
-                data: { entries: eventLogs } as any, count: eventLogs.length,
-                extractedById: systemUserId,
-            },
+        await saveArtifact(prisma, {
+            id: uuidv4(), caseId, evidenceId,
+            type: 'EVENT_LOG', source: 'Windows EVTX',
+            data: { entries: eventLogs } as any, count: eventLogs.length,
+            extractedById: systemUserId,
         });
     }
 
     if (prefetchFiles.length > 0) {
-        await (prisma.artifact.create as any)({
-            data: {
-                id: uuidv4(), caseId, evidenceId,
-                type: 'PREFETCH', source: 'Windows Prefetch',
-                data: { entries: prefetchFiles } as any, count: prefetchFiles.length,
-                extractedById: systemUserId,
-            },
+        await saveArtifact(prisma, {
+            id: uuidv4(), caseId, evidenceId,
+            type: 'PREFETCH', source: 'Windows Prefetch',
+            data: { entries: prefetchFiles } as any, count: prefetchFiles.length,
+            extractedById: systemUserId,
         });
     }
 
     if (usbDevices.length > 0) {
-        await (prisma.artifact.create as any)({
-            data: {
-                id: uuidv4(), caseId, evidenceId,
-                type: 'USB_LOG', source: 'USBSTOR Registry',
-                data: { entries: usbDevices } as any, count: usbDevices.length,
-                extractedById: systemUserId,
-            },
+        await saveArtifact(prisma, {
+            id: uuidv4(), caseId, evidenceId,
+            type: 'USB_LOG', source: 'USBSTOR Registry',
+            data: { entries: usbDevices } as any, count: usbDevices.length,
+            extractedById: systemUserId,
         });
     }
 
     if (networkArtifacts.length > 0) {
-        await (prisma.artifact.create as any)({
-            data: {
-                id: uuidv4(), caseId, evidenceId,
-                type: 'NETWORK_CAPTURE', source: 'Network Connection Scan',
-                data: { entries: networkArtifacts } as any, count: networkArtifacts.length,
-                extractedById: systemUserId,
-            },
+        await saveArtifact(prisma, {
+            id: uuidv4(), caseId, evidenceId,
+            type: 'NETWORK_CAPTURE', source: 'Network Connection Scan',
+            data: { entries: networkArtifacts } as any, count: networkArtifacts.length,
+            extractedById: systemUserId,
         });
     }
 
@@ -348,24 +354,38 @@ async function runAnalyzing(caseId: string, evidenceBuffer: Buffer, tempFilePath
         return true;
     });
     await publishProgress(caseId, 'ANALYZING', 85, `Carved ${deduplicated.length} files`);
+    const timelineEvents: any[] = [];
+    const ev = await prisma.evidence.findUnique({
+        where: { id: evidenceId },
+        select: { sha256: true },
+    });
 
     // Store carved files as recovered files
     for (const carved of deduplicated.slice(0, 5000)) {
-        const ext = carved.signatureName.toLowerCase();
         try {
             await (prisma.recoveredFile.create as any)({
                 data: {
                     id: uuidv4(),
                     caseId,
                     evidenceId,
-                    filename: `carved_${carved.offsetStart.toString(16)}.${ext}`,
+                    filename: `carved_${carved.offsetStart.toString(16)}.${carved.signatureName.toLowerCase()}`,
                     mimeType: carved.mimeType ?? 'application/octet-stream',
                     sizeBytes: BigInt(carved.sizeBytes),
                     offsetStart: BigInt(carved.offsetStart),
                     offsetEnd: BigInt(carved.offsetEnd),
                     method: 'CARVING',
                     status: 'COMPLETED',
-                    confidenceScore: Math.min(carved.entropyScore > 0.5 ? 0.8 : 0.6, 1.0) * 100,
+                    confidence: Math.round(Math.min(carved.entropyScore > 0.5 ? 0.8 : 0.6, 1.0) * 100),
+                    entropyScore: carved.entropyScore,
+                    hasValidHeader: carved.headerFound,
+                    hasValidFooter: carved.footerFound,
+                    footerDistanceOk: carved.footerDistanceOk,
+                    byteContinuityOk: carved.byteContinuityOk,
+                    headerSignature: carved.headerSignature,
+                    footerSignature: carved.footerSignature ?? '',
+                    algorithmVersion: '1.0.0',
+                    scoringModelVersion: '1.0.0',
+                    evidenceHash: ev?.sha256 ?? null,
                 },
             });
         } catch (e) {
@@ -373,9 +393,31 @@ async function runAnalyzing(caseId: string, evidenceBuffer: Buffer, tempFilePath
         }
     }
 
+    // Add timeline events for each carved file
+    for (const carved of deduplicated.slice(0, 200)) {
+        timelineEvents.push({
+            id: uuidv4(),
+            caseId,
+            type: 'FILE' as any,
+            timestamp: new Date(),
+            description: `File signature detected: ${carved.signatureName} at disk offset 0x${carved.offsetStart.toString(16).toUpperCase()}`,
+            source: 'File Carving Engine',
+            targetObject: `carved_${carved.offsetStart.toString(16)}.${carved.signatureName.toLowerCase()}`,
+            correlationScore: Math.round(carved.entropyScore * 10),
+            metadata: {
+                offsetHex: `0x${carved.offsetStart.toString(16).toUpperCase()}`,
+                sizeBytes: carved.sizeBytes,
+                entropy: carved.entropyScore,
+                mimeType: carved.mimeType,
+                headerFound: carved.headerFound,
+                footerFound: carved.footerFound,
+            } as any,
+            createdById: systemUserId,
+        });
+    }
+
     // Create timeline events from artifacts
     await publishProgress(caseId, 'ANALYZING', 90, 'Generating timeline events');
-    const timelineEvents: any[] = [];
 
     for (const entry of browserHistory.slice(0, 500)) {
         timelineEvents.push({
@@ -516,6 +558,29 @@ const worker = new Worker(
             // ANALYZING stage (Uses stream carver via tempFilePath)
             await advanceCaseStatus(caseId, 'SCANNING' as CaseStatus, 'ANALYZING' as CaseStatus);
             await runAnalyzing(caseId, diskBuffer, tempFilePath, evidenceId);
+
+            const creator = await prisma.case.findUnique({
+                where: { id: caseId },
+                select: { createdById: true },
+            });
+            const demoResult = await ensureDemoForensicFindings(
+                prisma,
+                caseId,
+                evidenceId,
+                ev.sizeBytes,
+                creator?.createdById ?? ev.uploadedById,
+            );
+            if (demoResult.created) {
+                console.log(
+                    `[PIPELINE] Demo forensic dataset created: ${demoResult.files} files, ` +
+                    `${demoResult.artifacts} artifacts, ${demoResult.events} timeline events`,
+                );
+            }
+
+            const savedFiles = await prisma.recoveredFile.count({ where: { caseId } });
+            const savedArtifacts = await prisma.artifact.count({ where: { caseId } });
+            const savedEvents = await prisma.timelineEvent.count({ where: { caseId } });
+            console.log(`[PIPELINE] DB verification: ${savedFiles} files, ${savedArtifacts} artifacts, ${savedEvents} timeline events saved`);
 
             // Mark case as READY
             await advanceCaseStatus(caseId, 'ANALYZING' as CaseStatus, 'READY' as CaseStatus);

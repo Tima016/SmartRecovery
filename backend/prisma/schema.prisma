@@ -17,9 +17,7 @@ datasource db {
 
 enum UserRole {
   ADMIN
-  INVESTIGATOR
-  ANALYST
-  AUDITOR
+  USER
 }
 
 enum CaseStatus {
@@ -156,7 +154,7 @@ model User {
   passwordHash       String
   firstName          String
   lastName           String
-  role               UserRole @default(ANALYST)
+  role               UserRole @default(USER)
   isActive           Boolean  @default(true)
   isTwoFactorEnabled Boolean  @default(false)
   twoFactorSecret    String?

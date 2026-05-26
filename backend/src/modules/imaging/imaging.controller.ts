@@ -17,14 +17,14 @@ export class ImagingController {
     constructor(private readonly imagingService: ImagingService) { }
 
     @Post()
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Create a new disk imaging job' })
     create(@Body() dto: CreateImagingJobDto, @GetUser('id') userId: string, @Req() req: Request) {
         return this.imagingService.createJob(dto, userId, req.ip);
     }
 
     @Post('start')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Start a new disk imaging job (alias for POST /imaging)' })
     start(@Body() dto: CreateImagingJobDto, @GetUser('id') userId: string, @Req() req: Request) {
         return this.imagingService.createJob(dto, userId, req.ip);
@@ -35,6 +35,14 @@ export class ImagingController {
     @ApiQuery({ name: 'caseId', required: false })
     findAll(@Query('caseId') caseId?: string) {
         return this.imagingService.findAll(caseId);
+    }
+
+    @Get('sources')
+    @ApiOperation({ summary: 'List available local disk sources (fixed + removable)' })
+    @ApiQuery({ name: 'usbOnly', required: false })
+    listSources(@Query('usbOnly') usbOnly?: string) {
+        const onlyUsb = String(usbOnly ?? '').toLowerCase() === 'true';
+        return this.imagingService.listSources(onlyUsb);
     }
 
     @Get(':id')
@@ -50,14 +58,14 @@ export class ImagingController {
     }
 
     @Patch(':id/pause')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Pause a running imaging job' })
     pause(@Param('id') id: string, @GetUser('id') userId: string, @Req() req: Request) {
         return this.imagingService.pause(id, userId, req.ip);
     }
 
     @Patch(':id/resume')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Resume a paused imaging job' })
     resume(@Param('id') id: string, @GetUser('id') userId: string, @Req() req: Request) {
         return this.imagingService.resume(id, userId, req.ip);

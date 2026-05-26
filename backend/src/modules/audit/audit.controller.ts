@@ -14,7 +14,7 @@ export class AuditController {
     constructor(private readonly auditService: AuditService) { }
 
     @Get('logs')
-    @Roles(UserRole.ADMIN, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN)
     @ApiOperation({ summary: 'Get audit logs (paginated)' })
     @ApiQuery({ name: 'page', required: false, type: Number })
     @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -30,7 +30,7 @@ export class AuditController {
     }
 
     @Get('verify-chain')
-    @Roles(UserRole.ADMIN, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN)
     @ApiOperation({ summary: 'Verify audit log hash chain integrity' })
     verifyChain() {
         return this.auditService.verifyChainIntegrity();

@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Search, Globe, Usb, BookOpen, AlertCircle, ChevronUp, ChevronDown, Loader2 } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { artifactsApi } from '../../api/artifacts.api';
+import { useCase } from '../../context/CaseContext';
 
 const tabs = [
     { id: 'browser', icon: Globe, label: 'Browser History' },
@@ -12,144 +13,166 @@ const tabs = [
 
 type TabId = typeof tabs[number]['id'];
 
+type BrowserRow = { url: string; title: string; time: string; browser: string; visits: number };
+type UsbRow = { device: string; serial: string; type: string; connected: string; size: string };
+type RegistryRow = { hive: string; key: string; value: string; data: string; time: string; action: string };
+type EventRow = { id: string; level: string; source: string; msg: string; time: string };
+
 const levelColor: Record<string, string> = {
     INFO: 'text-status-info',
     WARN: 'text-status-warn',
+    WARNING: 'text-status-warn',
     ERROR: 'text-status-error',
+    CRITICAL: 'text-status-error',
+};
+
+const toTimestamp = (value: any) => {
+    const str = String(value ?? '').trim();
+    if (!str) return '—';
+    const d = new Date(str);
+    return isNaN(d.getTime()) ? str : d.toISOString();
 };
 
 export default function ArtifactAnalysis() {
     const [activeTab, setActiveTab] = useState<TabId>('browser');
     const [search, setSearch] = useState('');
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
-    const { caseId } = useParams<{ caseId: string }>();
+    const { caseId: urlCaseId } = useParams<{ caseId: string }>();
+    const { selectedCaseId, setSelectedCaseId } = useCase();
+    const effectiveCaseId = urlCaseId || selectedCaseId;
 
-    // Data state
-    const [browserHistory, setBrowserHistory] = useState<any[]>([]);
-    const [usbHistory, setUsbHistory] = useState<any[]>([]);
-    const [registryChanges, setRegistryChanges] = useState<any[]>([]);
-    const [eventLogs, setEventLogs] = useState<any[]>([]);
+    const [browserHistory, setBrowserHistory] = useState<BrowserRow[]>([]);
+    const [usbHistory, setUsbHistory] = useState<UsbRow[]>([]);
+    const [registryChanges, setRegistryChanges] = useState<RegistryRow[]>([]);
+    const [eventLogs, setEventLogs] = useState<EventRow[]>([]);
+
+    useEffect(() => {
+        if (urlCaseId && urlCaseId !== selectedCaseId) {
+            setSelectedCaseId(urlCaseId);
+        }
+    }, [urlCaseId, selectedCaseId, setSelectedCaseId]);
 
     useEffect(() => {
         let cancelled = false;
 
         const fetchArtifacts = async () => {
-            if (!caseId) {
+            if (!effectiveCaseId) {
                 setLoading(false);
                 return;
             }
 
             try {
-                const data = await artifactsApi.getByCaseId(caseId);
+                setLoading(true);
+                setError('');
+                const data = await artifactsApi.getByCaseId(effectiveCaseId);
                 if (cancelled) return;
 
                 const list = Array.isArray(data) ? data : (data?.data ?? []);
 
-                // Categorize artifacts by type â€” unpack nested data.entries
-                const browser: any[] = [];
-                const usb: any[] = [];
-                const registry: any[] = [];
-                const events: any[] = [];
+                const browser: BrowserRow[] = [];
+                const usb: UsbRow[] = [];
+                const registry: RegistryRow[] = [];
+                const events: EventRow[] = [];
 
                 for (const item of list) {
-                    const type = (item.type ?? '').toUpperCase();
-                    const entries = item.data?.entries ?? [];
+                    const type = String(item.type ?? '').toUpperCase();
+                    const entries = Array.isArray(item.data?.entries) ? item.data.entries : [];
 
                     if (type === 'BROWSER_HISTORY' || type.includes('BROWSER')) {
-                        for (const entry of (Array.isArray(entries) ? entries : [])) {
+                        for (const entry of entries) {
                             browser.push({
-                                url: entry.url ?? 'â€”',
-                                title: entry.title ?? 'â€”',
-                                time: entry.visitTime ?? entry.timestamp ?? 'â€”',
-                                browser: entry.browser ?? item.source ?? 'â€”',
-                                visits: entry.visitCount ?? 1,
+                                url: entry.url ?? '—',
+                                title: entry.title ?? '—',
+                                time: toTimestamp(entry.visitTime ?? entry.timestamp),
+                                browser: entry.browser ?? item.source ?? '—',
+                                visits: Number(entry.visitCount ?? 1),
                             });
                         }
                     } else if (type === 'USB_LOG' || type.includes('USB')) {
-                        for (const entry of (Array.isArray(entries) ? entries : [])) {
+                        for (const entry of entries) {
                             usb.push({
-                                device: entry.deviceDescription ?? entry.device ?? 'â€”',
-                                serial: entry.serialNumber ?? entry.serial ?? 'â€”',
-                                type: entry.deviceId ?? 'USB',
-                                connected: entry.firstConnected ?? entry.timestamp ?? 'â€”',
-                                size: 'â€”',
+                                device: entry.deviceDescription ?? entry.deviceId ?? '—',
+                                serial: entry.serialNumber ?? '—',
+                                type: `${entry.vendorId ?? ''} ${entry.productId ?? ''}`.trim() || entry.deviceId || 'USB',
+                                connected: toTimestamp(entry.firstConnected ?? entry.lastConnected ?? entry.timestamp),
+                                size: '—',
                             });
                         }
                     } else if (type === 'REGISTRY_HIVE' || type.includes('REGISTRY')) {
-                        const regEntries = item.data?.entries ?? [];
-                        const apps = item.data?.installedApps ?? [];
-                        const accounts = item.data?.userAccounts ?? [];
-                        for (const entry of (Array.isArray(regEntries) ? regEntries : [])) {
+                        const regEntries = Array.isArray(item.data?.entries) ? item.data.entries : [];
+                        const apps = Array.isArray(item.data?.installedApps) ? item.data.installedApps : [];
+                        const accounts = Array.isArray(item.data?.userAccounts) ? item.data.userAccounts : [];
+
+                        for (const entry of regEntries) {
                             registry.push({
-                                hive: entry.hive ?? 'â€”',
-                                key: entry.key ?? 'â€”',
-                                value: entry.valueName ?? 'â€”',
-                                data: entry.valueData ?? 'â€”',
-                                time: entry.timestamp ?? 'â€”',
+                                hive: entry.hive ?? '—',
+                                key: entry.key ?? '—',
+                                value: entry.valueName ?? '—',
+                                data: entry.valueData ?? '—',
+                                time: toTimestamp(entry.lastModified),
                                 action: 'READ',
                             });
                         }
-                        for (const app of (Array.isArray(apps) ? apps : [])) {
+                        for (const app of apps) {
                             registry.push({
                                 hive: 'SOFTWARE',
-                                key: app.installLocation ?? 'â€”',
-                                value: app.name ?? 'â€”',
-                                data: `v${app.version ?? '?'} (${app.publisher ?? 'Unknown'})`,
-                                time: app.installDate ?? 'â€”',
+                                key: app.installPath ?? '—',
+                                value: app.name ?? '—',
+                                data: `v${app.version ?? '?'} ${app.publisher ? `(${app.publisher})` : ''}`.trim(),
+                                time: toTimestamp(app.installDate),
                                 action: 'INSTALL',
                             });
                         }
-                        for (const acct of (Array.isArray(accounts) ? accounts : [])) {
+                        for (const acct of accounts) {
                             registry.push({
                                 hive: 'SAM',
                                 key: 'SAM\\Domains\\Account\\Users',
-                                value: acct.username ?? 'â€”',
-                                data: `SID: ${acct.sid ?? 'â€”'} | Last Login: ${acct.lastLogin ?? 'â€”'}`,
-                                time: acct.lastLogin ?? 'â€”',
+                                value: acct.username ?? '—',
+                                data: `SID: ${acct.sid ?? '—'} | Last Login: ${acct.lastLogin ?? '—'}`,
+                                time: toTimestamp(acct.lastLogin),
                                 action: 'ACCOUNT',
                             });
                         }
                     } else if (type === 'EVENT_LOG' || type.includes('EVENT')) {
-                        for (const entry of (Array.isArray(entries) ? entries : [])) {
+                        for (const entry of entries) {
                             events.push({
-                                id: entry.eventId ?? 'â€”',
-                                level: entry.level ?? 'INFO',
-                                source: entry.source ?? 'â€”',
-                                msg: entry.description ?? 'â€”',
-                                time: entry.timestamp ?? 'â€”',
+                                id: String(entry.eventId ?? '—'),
+                                level: String(entry.level ?? 'INFO').toUpperCase(),
+                                source: entry.source ?? entry.channel ?? '—',
+                                msg: entry.description ?? '—',
+                                time: toTimestamp(entry.timestamp),
                             });
                         }
                     } else if (type === 'PREFETCH') {
-                        for (const entry of (Array.isArray(entries) ? entries : [])) {
+                        for (const entry of entries) {
                             events.push({
-                                id: entry.runCount ?? 'â€”',
+                                id: String(entry.runCount ?? '—'),
                                 level: 'INFO',
                                 source: 'Prefetch',
-                                msg: `${entry.executableName ?? 'â€”'} (${entry.runCount ?? 0} runs)`,
-                                time: entry.lastRunTime ?? 'â€”',
+                                msg: `${entry.filename ?? '—'} (${entry.runCount ?? 0} runs)`,
+                                time: toTimestamp(entry.lastRun),
                             });
                         }
                     } else if (type === 'NETWORK_CAPTURE' || type.includes('NETWORK')) {
-                        for (const entry of (Array.isArray(entries) ? entries : [])) {
+                        for (const entry of entries) {
                             events.push({
-                                id: entry.pid ?? 'â€”',
-                                level: 'INFO',
+                                id: `${entry.dstIp ?? '—'}:${entry.dstPort ?? '—'}`,
+                                level: entry.suspicious ? 'WARN' : 'INFO',
                                 source: 'Network',
-                                msg: `${entry.protocol ?? 'â€”'} ${entry.localAddress ?? ''}:${entry.localPort ?? ''} â†’ ${entry.remoteAddress ?? ''}:${entry.remotePort ?? ''} (${entry.state ?? 'â€”'})`,
-                                time: entry.timestamp ?? 'â€”',
+                                msg: `${entry.protocol ?? '—'} ${entry.srcIp ?? ''}:${entry.srcPort ?? ''} -> ${entry.dstIp ?? ''}:${entry.dstPort ?? ''} (${entry.note ?? '—'})`,
+                                time: toTimestamp(entry.timestamp),
                             });
                         }
                     } else {
-                        // Fallback: try treating item as flat
                         events.push({
-                            id: item.id ?? 'â€”',
+                            id: String(item.id ?? '—'),
                             level: 'INFO',
                             source: item.source ?? type,
-                            msg: item.data ? JSON.stringify(item.data).slice(0, 100) : 'â€”',
-                            time: item.extractedAt ?? item.createdAt ?? 'â€”',
+                            msg: item.data ? JSON.stringify(item.data).slice(0, 180) : '—',
+                            time: toTimestamp(item.extractedAt ?? item.createdAt),
                         });
                     }
                 }
@@ -167,7 +190,38 @@ export default function ArtifactAnalysis() {
 
         fetchArtifacts();
         return () => { cancelled = true; };
-    }, [caseId]);
+    }, [effectiveCaseId]);
+
+    const searchLower = search.toLowerCase();
+
+    const filteredBrowser = useMemo(() => {
+        const filtered = browserHistory.filter((r) => !search || r.url.toLowerCase().includes(searchLower) || r.title.toLowerCase().includes(searchLower));
+        return filtered.sort((a, b) => sortDir === 'asc' ? a.time.localeCompare(b.time) : b.time.localeCompare(a.time));
+    }, [browserHistory, search, searchLower, sortDir]);
+
+    const filteredUsb = useMemo(() => {
+        const filtered = usbHistory.filter((r) => !search || r.device.toLowerCase().includes(searchLower) || r.serial.toLowerCase().includes(searchLower));
+        return filtered.sort((a, b) => sortDir === 'asc' ? a.connected.localeCompare(b.connected) : b.connected.localeCompare(a.connected));
+    }, [usbHistory, search, searchLower, sortDir]);
+
+    const filteredRegistry = useMemo(() => {
+        const filtered = registryChanges.filter((r) => !search || `${r.hive} ${r.key} ${r.value} ${r.data}`.toLowerCase().includes(searchLower));
+        return filtered.sort((a, b) => sortDir === 'asc' ? a.time.localeCompare(b.time) : b.time.localeCompare(a.time));
+    }, [registryChanges, search, searchLower, sortDir]);
+
+    const filteredEvents = useMemo(() => {
+        const filtered = eventLogs.filter((r) => !search || `${r.id} ${r.source} ${r.msg}`.toLowerCase().includes(searchLower));
+        return filtered.sort((a, b) => sortDir === 'asc' ? a.time.localeCompare(b.time) : b.time.localeCompare(a.time));
+    }, [eventLogs, search, searchLower, sortDir]);
+
+    if (!effectiveCaseId) {
+        return (
+            <div className="h-full flex flex-col items-center justify-center space-y-4 p-4 overflow-hidden relative">
+                <h2 className="text-xl font-bold text-text-primary mono">No Case Selected</h2>
+                <p className="text-text-muted text-sm mono">Please select a case to view artifacts</p>
+            </div>
+        );
+    }
 
     if (loading) {
         return (
@@ -187,7 +241,6 @@ export default function ArtifactAnalysis() {
 
     return (
         <div className="h-full flex flex-col overflow-hidden p-4 gap-4">
-            {/* Tab bar */}
             <div className="flex items-center gap-1 flex-shrink-0">
                 {tabs.map(({ id, icon: Icon, label }) => (
                     <button
@@ -208,18 +261,19 @@ export default function ArtifactAnalysis() {
                         type="text"
                         placeholder="Search artifacts..."
                         value={search}
-                        onChange={e => setSearch(e.target.value)}
+                        onChange={(e) => setSearch(e.target.value)}
                         className="bg-transparent text-text-primary text-xs outline-none placeholder-text-muted mono w-48"
                     />
                 </div>
-                <button onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-bg-elevated border border-bg-border text-text-secondary text-xs rounded-sm hover:text-text-primary">
+                <button
+                    onClick={() => setSortDir((d) => d === 'asc' ? 'desc' : 'asc')}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-bg-elevated border border-bg-border text-text-secondary text-xs rounded-sm hover:text-text-primary"
+                >
                     {sortDir === 'desc' ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
                     Time
                 </button>
             </div>
 
-            {/* Content */}
             <div className="flex-1 overflow-hidden glass-panel rounded-sm flex flex-col">
                 {activeTab === 'browser' && (
                     <>
@@ -227,19 +281,17 @@ export default function ArtifactAnalysis() {
                             <span>URL</span><span>Title</span><span>Timestamp</span><span>Browser</span><span>Visits</span>
                         </div>
                         <div className="flex-1 overflow-y-auto divide-y divide-bg-border/30">
-                            {browserHistory.filter(r => !search || r.url.includes(search) || r.title.toLowerCase().includes(search.toLowerCase())).length > 0 ?
-                                browserHistory.filter(r => !search || r.url.includes(search) || r.title.toLowerCase().includes(search.toLowerCase())).map((r, i) => (
-                                    <div key={i} className="grid grid-cols-[3fr_2fr_1.2fr_0.7fr_0.6fr] gap-3 px-4 py-2.5 table-row-hover items-center">
-                                        <span className="text-accent-cyan text-[11px] mono truncate">{r.url}</span>
-                                        <span className="text-text-primary text-xs truncate">{r.title}</span>
-                                        <span className="text-text-secondary text-[10px] mono">{r.time}</span>
-                                        <span className="text-text-muted text-[10px]">{r.browser}</span>
-                                        <span className="text-text-secondary text-[10px] mono text-right">{r.visits}</span>
-                                    </div>
-                                )) : (
-                                    <div className="px-4 py-6 text-center text-text-muted text-xs mono">No browser history found</div>
-                                )
-                            }
+                            {filteredBrowser.length > 0 ? filteredBrowser.map((r, i) => (
+                                <div key={i} className="grid grid-cols-[3fr_2fr_1.2fr_0.7fr_0.6fr] gap-3 px-4 py-2.5 table-row-hover items-center">
+                                    <span className="text-accent-cyan text-[11px] mono truncate">{r.url}</span>
+                                    <span className="text-text-primary text-xs truncate">{r.title}</span>
+                                    <span className="text-text-secondary text-[10px] mono">{r.time}</span>
+                                    <span className="text-text-muted text-[10px]">{r.browser}</span>
+                                    <span className="text-text-secondary text-[10px] mono text-right">{r.visits}</span>
+                                </div>
+                            )) : (
+                                <div className="px-4 py-6 text-center text-text-muted text-xs mono">No browser history found</div>
+                            )}
                         </div>
                     </>
                 )}
@@ -249,7 +301,7 @@ export default function ArtifactAnalysis() {
                             <span>Device</span><span>Serial</span><span>Type</span><span>Connected</span><span>Size</span>
                         </div>
                         <div className="flex-1 overflow-y-auto divide-y divide-bg-border/30">
-                            {usbHistory.length > 0 ? usbHistory.map((r, i) => (
+                            {filteredUsb.length > 0 ? filteredUsb.map((r, i) => (
                                 <div key={i} className="grid grid-cols-[1.5fr_1.5fr_1fr_1.2fr_0.7fr] gap-3 px-4 py-3 table-row-hover items-center">
                                     <span className="text-text-primary text-xs font-medium">{r.device}</span>
                                     <span className="text-accent-cyan text-[10px] mono">{r.serial}</span>
@@ -269,14 +321,14 @@ export default function ArtifactAnalysis() {
                             <span>Hive</span><span>Key</span><span>Value</span><span>Data</span><span>Time</span><span>Action</span>
                         </div>
                         <div className="flex-1 overflow-y-auto divide-y divide-bg-border/30">
-                            {registryChanges.length > 0 ? registryChanges.map((r, i) => (
+                            {filteredRegistry.length > 0 ? filteredRegistry.map((r, i) => (
                                 <div key={i} className="grid grid-cols-[0.7fr_2fr_1fr_1.5fr_0.9fr_0.6fr] gap-3 px-4 py-2.5 table-row-hover items-center">
                                     <span className="text-accent-cyan text-[10px] mono font-medium">{r.hive}</span>
                                     <span className="text-text-muted text-[10px] mono truncate">{r.key}</span>
                                     <span className="text-text-primary text-[11px] mono">{r.value}</span>
                                     <span className="text-text-secondary text-[10px] mono truncate">{r.data}</span>
-                                    <span className="text-text-muted text-[10px] mono">{typeof r.time === 'string' ? r.time.split(' ')[0] : 'â€”'}</span>
-                                    <span className={`tag border text-[9px] ${r.action === 'CREATE' ? 'bg-status-warn/15 text-status-warn border-status-warn/30' : 'bg-status-info/15 text-status-info border-status-info/30'}`}>
+                                    <span className="text-text-muted text-[10px] mono">{typeof r.time === 'string' ? r.time.split('T')[0] : '—'}</span>
+                                    <span className={`tag border text-[9px] ${r.action === 'INSTALL' ? 'bg-status-warn/15 text-status-warn border-status-warn/30' : 'bg-status-info/15 text-status-info border-status-info/30'}`}>
                                         {r.action}
                                     </span>
                                 </div>
@@ -288,13 +340,13 @@ export default function ArtifactAnalysis() {
                 )}
                 {activeTab === 'events' && (
                     <>
-                        <div className="grid grid-cols-[0.6fr_0.6fr_0.8fr_4fr_1.2fr] gap-3 px-4 py-2 bg-bg-elevated border-b border-bg-border text-[10px] mono text-text-muted uppercase tracking-wide flex-shrink-0">
+                        <div className="grid grid-cols-[0.8fr_0.6fr_0.8fr_3.8fr_1.2fr] gap-3 px-4 py-2 bg-bg-elevated border-b border-bg-border text-[10px] mono text-text-muted uppercase tracking-wide flex-shrink-0">
                             <span>Event ID</span><span>Level</span><span>Source</span><span>Description</span><span>Time</span>
                         </div>
                         <div className="flex-1 overflow-y-auto divide-y divide-bg-border/30">
-                            {eventLogs.length > 0 ? eventLogs.map((r, i) => (
-                                <div key={i} className="grid grid-cols-[0.6fr_0.6fr_0.8fr_4fr_1.2fr] gap-3 px-4 py-2.5 table-row-hover items-center">
-                                    <span className="text-accent-cyan text-[10px] mono font-bold">{r.id}</span>
+                            {filteredEvents.length > 0 ? filteredEvents.map((r, i) => (
+                                <div key={i} className="grid grid-cols-[0.8fr_0.6fr_0.8fr_3.8fr_1.2fr] gap-3 px-4 py-2.5 table-row-hover items-center">
+                                    <span className="text-accent-cyan text-[10px] mono font-bold truncate">{r.id}</span>
                                     <span className={`text-[10px] mono font-medium ${levelColor[r.level] ?? 'text-text-muted'}`}>{r.level}</span>
                                     <span className="text-text-muted text-[10px] mono">{r.source}</span>
                                     <span className="text-text-secondary text-xs truncate">{r.msg}</span>

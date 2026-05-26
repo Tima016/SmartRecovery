@@ -11,7 +11,7 @@ export class NotesController {
     constructor(private readonly notesService: NotesService) { }
 
     @Post()
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async createNote(
         @Body() body: { entityType: string; entityId: string; content: string; isPinned?: boolean },
         @Req() req: any,
@@ -27,7 +27,7 @@ export class NotesController {
     }
 
     @Get(':entityType/:entityId')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async getNotes(
         @Param('entityType') entityType: string,
         @Param('entityId') entityId: string,
@@ -36,7 +36,7 @@ export class NotesController {
     }
 
     @Put(':id')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async updateNote(
         @Param('id') id: string,
         @Body() body: { content: string },
@@ -46,19 +46,19 @@ export class NotesController {
     }
 
     @Patch(':id/pin')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async pinNote(@Param('id') id: string, @Req() req: any) {
         return this.notesService.pinNote(id, req.user.id, true);
     }
 
     @Patch(':id/unpin')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async unpinNote(@Param('id') id: string, @Req() req: any) {
         return this.notesService.pinNote(id, req.user.id, false);
     }
 
     @Delete(':id')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async deleteNote(@Param('id') id: string, @Req() req: any) {
         return this.notesService.deleteNote(id, req.user.id, req.user.role, req.ip);
     }

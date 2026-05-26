@@ -105,7 +105,8 @@ async function streamFromMinio(bucket: string, key: string): Promise<Readable> {
 function streamDecryptedHashes(
     encryptedStream: Readable,
     ivHex: string,
-    authTagHex: string
+    authTagHex: string,
+    onProgress?: (totalBytes: number) => void
 ): Promise<{ md5: string; sha1: string; sha256: string; sha512: string; totalBytes: number }> {
     return new Promise((resolve, reject) => {
         const hexKey = process.env.ENCRYPTION_KEY;
@@ -130,6 +131,7 @@ function streamDecryptedHashes(
             sha1.update(chunk);
             sha256.update(chunk);
             sha512.update(chunk);
+            if (onProgress) onProgress(totalBytes);
         });
 
         decipher.on('end', () => resolve({
@@ -188,6 +190,9 @@ const worker = new Worker(
 
             console.log(`[Imaging Worker] Streaming evidence from ${evidence.storageBucket}/${evidence.encryptedKey}`);
             const encryptedStream = await streamFromMinio(evidence.storageBucket, evidence.encryptedKey);
+            const totalBytesExpected = Number(evidence.sizeBytes ?? 0n);
+            let lastProgressEmitAt = Date.now();
+            let lastProgressPercent = 0;
 
             pubSub.publish('case-events', JSON.stringify({
                 event: 'task.progress', caseId, taskId, progress: 30, stage: 'IMAGING', detail: `Connected to evidence stream`
@@ -199,7 +204,42 @@ const worker = new Worker(
             }));
 
             console.log(`[Imaging Worker] Computing hashes via stream decipher...`);
-            const hashes = await streamDecryptedHashes(encryptedStream, evidence.ivHex, evidence.authTagHex);
+            const hashes = await streamDecryptedHashes(
+                encryptedStream,
+                evidence.ivHex,
+                evidence.authTagHex,
+                (decryptedBytes) => {
+                    const now = Date.now();
+                    const transferredBytes = Math.max(0, decryptedBytes);
+                    const pctFromBytes = totalBytesExpected > 0 ? (transferredBytes / totalBytesExpected) * 100 : 0;
+                    const progress = Math.max(40, Math.min(80, 40 + (pctFromBytes * 0.4)));
+                    const rounded = Math.round(progress * 10) / 10;
+
+                    // Throttle live progress writes to reduce Redis/DB churn.
+                    if (rounded - lastProgressPercent < 0.3 && now - lastProgressEmitAt < 750) return;
+                    lastProgressEmitAt = now;
+                    lastProgressPercent = rounded;
+
+                    const livePayload = JSON.stringify({
+                        progress: rounded,
+                        transferredBytes,
+                        sourceSizeBytes: totalBytesExpected,
+                        badSectors: 0,
+                        status: ImagingStatus.RUNNING,
+                        updatedAt: new Date().toISOString(),
+                    });
+                    connection.set(`imaging:progress:${imagingJobId}`, livePayload, 'EX', 3600).catch(() => undefined);
+
+                    pubSub.publish('case-events', JSON.stringify({
+                        event: 'task.progress',
+                        caseId,
+                        taskId,
+                        progress: rounded,
+                        stage: 'HASHING',
+                        detail: `Processed ${transferredBytes} bytes`,
+                    }));
+                },
+            );
             console.log(`[Imaging Worker] Hashes computed — SHA256: ${hashes.sha256.substring(0, 16)}...`);
 
             // Verify integrity against original DB hashes
@@ -234,6 +274,19 @@ const worker = new Worker(
             pubSub.publish('case-events', JSON.stringify({
                 event: 'task.progress', caseId, taskId, progress: 80, stage: 'HASHING', detail: 'Hash verification complete'
             }));
+            await connection.set(
+                `imaging:progress:${imagingJobId}`,
+                JSON.stringify({
+                    progress: 80,
+                    transferredBytes: hashes.totalBytes,
+                    sourceSizeBytes: totalBytesExpected,
+                    badSectors: 0,
+                    status: ImagingStatus.RUNNING,
+                    updatedAt: new Date().toISOString(),
+                }),
+                'EX',
+                3600,
+            );
 
             // ── Complete imaging task and advance to HASHING state ──
             await prisma.$transaction(async (tx) => {
@@ -262,6 +315,19 @@ const worker = new Worker(
             pubSub.publish('case-events', JSON.stringify({
                 event: 'phase.transition', caseId, newStatus: 'HASHING'
             }));
+            await connection.set(
+                `imaging:progress:${imagingJobId}`,
+                JSON.stringify({
+                    progress: 100,
+                    transferredBytes: hashes.totalBytes,
+                    sourceSizeBytes: totalBytesExpected,
+                    badSectors: 0,
+                    status: ImagingStatus.COMPLETED,
+                    updatedAt: new Date().toISOString(),
+                }),
+                'EX',
+                3600,
+            );
 
             // ── Queue the forensic pipeline for SCANNING + ANALYZING ──
             console.log(`[Imaging Worker] Queueing forensic pipeline for case=${caseId}, evidence=${evidence.id}`);
@@ -301,6 +367,19 @@ const worker = new Worker(
                 pubSub.publish('case-events', JSON.stringify({
                     event: 'task.failed', caseId, taskId, error: error.message
                 }));
+                await connection.set(
+                    `imaging:progress:${imagingJobId}`,
+                    JSON.stringify({
+                        progress: 0,
+                        transferredBytes: 0,
+                        badSectors: 0,
+                        status: ImagingStatus.FAILED,
+                        error: error.message,
+                        updatedAt: new Date().toISOString(),
+                    }),
+                    'EX',
+                    3600,
+                );
             } catch (cleanupError) {
                 console.error(`[Imaging Worker] FATAL: Cleanup failed for task ${taskId}:`, cleanupError);
             }

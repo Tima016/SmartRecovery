@@ -2,12 +2,9 @@ import {
     IsEmail,
     IsString,
     MinLength,
-    IsEnum,
     IsOptional,
-    IsArray,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
 
 export class RegisterDto {
     @ApiProperty({ example: 'john.doe@forensics.io' })
@@ -27,16 +24,6 @@ export class RegisterDto {
     @IsString()
     lastName: string;
 
-    @ApiPropertyOptional({ enum: UserRole, default: UserRole.ANALYST })
-    @IsOptional()
-    @IsEnum(UserRole)
-    role?: UserRole;
-
-    @ApiPropertyOptional({ example: ['192.168.1.1'], description: 'IP whitelist' })
-    @IsOptional()
-    @IsArray()
-    @IsString({ each: true })
-    allowedIps?: string[];
 }
 
 export class LoginDto {

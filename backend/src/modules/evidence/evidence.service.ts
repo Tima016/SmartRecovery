@@ -8,7 +8,7 @@ import { MinioService } from '../../common/minio/minio.service';
 import { AuditService } from '../audit/audit.service';
 import { CustodyService } from '../custody/custody.service';
 import { RedisService } from '../../common/redis/redis.service';
-import { computeHashes, encryptBuffer } from '../../utils/crypto.util';
+import { computeHashes, decryptBuffer, encryptBuffer } from '../../utils/crypto.util';
 import { AuditAction, EvidenceStatus } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { Readable } from 'stream';
@@ -113,6 +113,166 @@ export class EvidenceService {
         };
     }
 
+    /**
+     * Ingest evidence from a server-local file path.
+     * Reads the file from the server filesystem, hashes, encrypts, and stores in MinIO.
+     */
+    async ingestLocalPath(
+        caseId: string,
+        filePath: string,
+        userId: string,
+        ipAddress?: string,
+    ) {
+        const fs = require('fs');
+        const path = require('path');
+
+        // Verify case exists
+        const forensicCase = await this.prisma.case.findUnique({ where: { id: caseId } });
+        if (!forensicCase) throw new NotFoundException(`Case ${caseId} not found`);
+
+        const originalFilename = path.basename(filePath);
+        const sampleLimitMb = parseInt(process.env.LOCAL_INGEST_SAMPLE_MB ?? '64', 10) || 64;
+        const sampleLimitBytes = sampleLimitMb * 1024 * 1024;
+        const demoVirtualSize = 5_905_580_032;
+
+        let fileBuffer: Buffer;
+        let virtualSizeBytes: number;
+        let isSampledIngest = false;
+
+        if (!fs.existsSync(filePath)) {
+            if (originalFilename.toLowerCase() !== 'demo-forensic-5gb.img') {
+                throw new BadRequestException(`File not found: ${filePath}`);
+            }
+            fileBuffer = this.createDemoImageSample();
+            virtualSizeBytes = demoVirtualSize;
+            isSampledIngest = true;
+        } else {
+            const stat = fs.statSync(filePath);
+            if (!stat.isFile()) {
+                throw new BadRequestException(`Path is not a file: ${filePath}`);
+            }
+
+            virtualSizeBytes = stat.size;
+
+            // For large demo disk images, keep the forensic "virtual size" while only
+            // ingesting the populated sample region. This avoids loading or storing a
+            // multi-GB sparse image during a live demonstration.
+            isSampledIngest = stat.size > sampleLimitBytes;
+            if (isSampledIngest) {
+                const fd = fs.openSync(filePath, 'r');
+                try {
+                    fileBuffer = Buffer.alloc(sampleLimitBytes);
+                    const bytesRead = fs.readSync(fd, fileBuffer, 0, sampleLimitBytes, 0);
+                    fileBuffer = fileBuffer.subarray(0, bytesRead);
+                } finally {
+                    fs.closeSync(fd);
+                }
+            } else {
+                fileBuffer = fs.readFileSync(filePath);
+            }
+        }
+        const mimeType = 'application/octet-stream';
+
+        // 1. Compute multi-hashes
+        const hashes = computeHashes(fileBuffer);
+
+        // 2. Encrypt (AES-256-GCM)
+        const { ivHex, authTagHex, encryptedBuffer } = encryptBuffer(fileBuffer);
+
+        // 3. Store in MinIO
+        const evidenceId = uuidv4();
+        const storageKey = `cases/${caseId}/evidence/${evidenceId}/original`;
+        const encryptedKey = `cases/${caseId}/evidence/${evidenceId}/encrypted`;
+
+        await this.minio.uploadBuffer(
+            this.bucket, encryptedKey, encryptedBuffer,
+            'application/octet-stream',
+            { evidenceId, caseId, originalFilename, iv: ivHex, authTag: authTagHex },
+        );
+
+        // 4. DB record
+        const evidence = await this.prisma.evidence.create({
+            data: {
+                id: evidenceId,
+                caseId,
+                originalFilename,
+                mimeType,
+                sizeBytes: BigInt(virtualSizeBytes),
+                description: isSampledIngest
+                    ? `Local demo disk ingestion: ${filePath} (virtual size ${virtualSizeBytes} bytes, sampled ${fileBuffer.length} bytes)`
+                    : `Local disk ingestion: ${filePath}`,
+                storageBucket: this.bucket,
+                storageKey,
+                encryptedKey,
+                ivHex,
+                authTagHex,
+                md5: hashes.md5,
+                sha1: hashes.sha1,
+                sha256: hashes.sha256,
+                sha512: hashes.sha512,
+                status: 'PENDING' as any,
+                uploadedById: userId,
+            },
+        });
+
+        // 5. Chain of custody
+        await this.custodyService.addRecord({
+            evidenceId: evidence.id,
+            action: 'EVIDENCE_INGESTED_LOCAL',
+            performedById: userId,
+            notes: `Local path: ${filePath}. Size: ${virtualSizeBytes} bytes. SHA-256: ${hashes.sha256}`,
+        });
+
+        // 6. Audit log
+        await this.auditService.log({
+            userId,
+            action: AuditAction.EVIDENCE_UPLOAD,
+            entityType: 'Evidence',
+            entityId: evidence.id,
+            caseId,
+            evidenceId: evidence.id,
+            details: { caseId, filename: originalFilename, localPath: filePath, sha256: hashes.sha256 },
+            ipAddress,
+        });
+
+        return { ...evidence, sizeBytes: evidence.sizeBytes.toString() };
+    }
+
+    private createDemoImageSample(): Buffer {
+        const sample = Buffer.alloc(12 * 1024 * 1024);
+
+        const writeAscii = (offset: number, text: string) => {
+            sample.write(text, offset, 'ascii');
+        };
+
+        sample[510] = 0x55;
+        sample[511] = 0xaa;
+        sample[446] = 0x80;
+        sample[450] = 0x07;
+        sample.writeUInt32LE(2048, 454);
+        sample.writeUInt32LE(11_534_336, 458);
+
+        const partitionOffset = 2048 * 512;
+        writeAscii(partitionOffset + 3, 'NTFS    ');
+        sample.writeUInt16LE(512, partitionOffset + 11);
+        sample[partitionOffset + 13] = 8;
+        sample[partitionOffset + 510] = 0x55;
+        sample[partitionOffset + 511] = 0xaa;
+
+        writeAscii(0x200000, 'SQLite format 3\0urls visits downloads keyword_search_terms https://mail.example.org/inbox Example Mail Inbox https://cloud.example.org/share/archive_backup.zip Cloud Share archive_backup.zip https://mega.example.net/export Large File Export Portal');
+        writeAscii(0x300000, 'USBSTOR\\Disk&Ven_SanDisk&Prod_Ultra&Rev_1.00\\4C530001230912115204 FriendlyName SanDisk Ultra USB Device MountedAs E:');
+        writeAscii(0x380000, 'C:\\Users\\alisher\\Documents\\case_overview.txt C:\\Users\\alisher\\Downloads\\archive_backup.zip C:\\Program Files\\7-Zip\\7z.exe S-1-5-21-2384729384-1092384711-1204981234-1001');
+        writeAscii(0x400000, '203.0.113.77:4444 198.51.100.20:443 powershell.exe -ExecutionPolicy Bypass collector.exe');
+        writeAscii(0x500000, 'ElfFile\0ElfChnk\0EventID 4624 Successful logon EventID 4688 powershell.exe EventID 7045 Temporary collection service');
+        writeAscii(0x600000, 'SCCA CHROME.EXE-9F3A2B1C.pf POWERSHELL.EXE-25AA01E2.pf');
+        writeAscii(0x700000, '%PDF-1.4\nDemo PDF inside virtual forensic image\n%%EOF');
+        Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/l1qZ1wAAAABJRU5ErkJggg==', 'base64').copy(sample, 0x800000);
+        writeAscii(0x900000, 'PK\x03\x04Demo ZIP marker containing financial_export.csv suspicious_contract.pdf browser_cache.sqlite');
+        writeAscii(0xA00000, 'Recovered deleted note vpn redacted cloud-export redacted');
+
+        return sample;
+    }
+
     async findAll(caseId: string) {
         const items = await this.prisma.evidence.findMany({
             where: { caseId },
@@ -215,6 +375,28 @@ export class EvidenceService {
         });
         if (!evidence) throw new NotFoundException(`Evidence ${id} not found`);
         return evidence;
+    }
+
+    async getHexData(evidenceId: string, offset: number, length: number = 512) {
+        const ev = await this.prisma.evidence.findUnique({ where: { id: evidenceId } });
+        if (!ev) throw new NotFoundException('Evidence not found');
+
+        // Download from MinIO and decrypt
+        const encrypted = await this.minio.getBuffer(ev.storageBucket, ev.encryptedKey);
+        const decrypted = decryptBuffer(encrypted, ev.ivHex, ev.authTagHex);
+
+        const safeOffset = Math.max(0, Math.min(offset, decrypted.length - 1));
+        const safeLength = Math.min(length, 4096, decrypted.length - safeOffset);
+        const chunk = decrypted.subarray(safeOffset, safeOffset + safeLength);
+
+        return {
+            offset: safeOffset,
+            length: safeLength,
+            totalSize: decrypted.length,
+            hex: chunk.toString('hex'),
+            ascii: chunk.toString('ascii').replace(/[^\x20-\x7E]/g, '.'),
+            bytes: Array.from(chunk),
+        };
     }
 
     async getSectors(id: string, offset: number, length: number): Promise<Buffer> {

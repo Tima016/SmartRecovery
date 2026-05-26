@@ -4,7 +4,7 @@ import {
     User,
     Calendar,
     Hash,
-
+    Plus,
     Activity,
     Tag,
     HardDrive,
@@ -16,8 +16,9 @@ import {
 } from 'lucide-react';
 import { casesApi } from '../../api/cases.api';
 import { useSocket } from '../../context/SocketContext';
+import { useCase } from '../../context/CaseContext';
 import { Skeleton } from '../ui/Skeleton';
-import { LockScreen } from '../common/LockScreen';
+import NewCaseWizard from '../modals/NewCaseWizard';
 interface CaseDetailsData {
     id: string;
     caseNumber?: string;
@@ -48,9 +49,17 @@ export default function CaseDetails() {
     const [caseData, setCaseData] = useState<CaseDetailsData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-    const [liveProgress, setLiveProgress] = useState(0);
+    const [wizardOpen, setWizardOpen] = useState(false);
 
+    const { setSelectedCaseId } = useCase();
     const { socket, isConnected, joinCase, leaveCase } = useSocket();
+
+    // Sync CaseContext so sidebar navigation works for case-scoped pages
+    useEffect(() => {
+        if (caseId) {
+            setSelectedCaseId(caseId);
+        }
+    }, [caseId, setSelectedCaseId]);
 
     useEffect(() => {
         let cancelled = false;
@@ -77,20 +86,13 @@ export default function CaseDetails() {
 
         joinCase(caseId);
 
-        socket.on('task.progress', (data: { caseId: string, progress: number }) => {
-            if (data.caseId === caseId) {
-                setLiveProgress(data.progress);
-            }
+        socket.on('task.progress', (_data: { caseId: string, progress: number }) => {
+            // Progress tracking available for future use
         });
 
         socket.on('phase.transition', (data: { caseId: string, newStatus: string }) => {
             if (data.caseId === caseId) {
                 setCaseData(prev => prev ? { ...prev, status: data.newStatus } : null);
-                if (data.newStatus === 'READY') {
-                    setLiveProgress(100);
-                } else {
-                    setLiveProgress(0); // reset progress for the next phase
-                }
             }
         });
 
@@ -185,10 +187,17 @@ export default function CaseDetails() {
                         {getCasePriority(caseData)}
                     </span>
                     <button
+                        onClick={() => setWizardOpen(true)}
+                        className="flex items-center gap-1.5 px-4 py-1.5 bg-accent-cyan/10 border border-accent-cyan/30 text-accent-cyan text-xs hover:bg-accent-cyan/20 transition-colors rounded-sm"
+                    >
+                        <Plus className="w-3.5 h-3.5" />
+                        Add Data Source
+                    </button>
+                    <button
                         onClick={() => navigate('/cases')}
                         className="px-4 py-1.5 border border-bg-border text-text-secondary hover:text-text-primary text-sm rounded-sm transition-colors"
                     >
-                        Close Case
+                        Back to Cases
                     </button>
                 </div>
             </div>
@@ -245,13 +254,12 @@ export default function CaseDetails() {
             </div>
 
             {/* Quick Actions */}
+            {/* Add Data Source Wizard */}
+            {wizardOpen && (
+                <NewCaseWizard onClose={() => setWizardOpen(false)} existingCaseId={caseData.id} />
+            )}
+
             <div className="relative mt-4">
-                {['IMAGING', 'HASHING', 'SCANNING', 'ANALYZING', 'ERROR'].includes(getCaseStatus(caseData)) && (
-                    <LockScreen
-                        status={getCaseStatus(caseData)}
-                        progress={liveProgress}
-                    />
-                )}
 
                 <h2 className="text-text-primary text-sm font-semibold mb-4 uppercase tracking-widest mono">Actions & Modules</h2>
                 <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
@@ -267,8 +275,7 @@ export default function CaseDetails() {
                         <button
                             key={id}
                             onClick={() => navigate(`/cases/${caseData.id}/${id}`)}
-                            disabled={getCaseStatus(caseData) !== 'READY' && getCaseStatus(caseData) !== 'CLOSED'}
-                            className={`text-left p-4 border rounded-sm transition-all hover:-translate-y-0.5 group ${col.replace('border-', 'border-').split(' ')[0]} bg-bg-primary hover:${col.split(' ')[2]} disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0`}
+                            className={`text-left p-4 border rounded-sm transition-all hover:-translate-y-0.5 group ${col.replace('border-', 'border-').split(' ')[0]} bg-bg-primary hover:${col.split(' ')[2]}`}
                             style={{ borderColor: 'var(--border)' }}
                         >
                             <div className="flex items-center gap-3 mb-3">

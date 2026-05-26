@@ -8,6 +8,19 @@ import { AuditAction, ImagingStatus, CaseStatus, TaskType, TaskStatus } from '@p
 import { CreateImagingJobDto } from './dto/imaging.dto';
 import { v4 as uuidv4 } from 'uuid';
 import { Queue } from 'bullmq';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
+
+export interface ImagingSourceDevice {
+    path: string;
+    label: string;
+    driveType: 'fixed' | 'removable' | 'network' | 'cdrom' | 'ramdisk' | 'unknown';
+    sizeBytes?: number;
+    freeBytes?: number;
+    isUsbLikely: boolean;
+}
 
 @Injectable()
 export class ImagingService {
@@ -199,13 +212,81 @@ export class ImagingService {
         const job = await this.findOne(id);
         const redisProgress = await this.redisService.get(`imaging:progress:${id}`);
         const liveProgress = redisProgress ? JSON.parse(redisProgress) : null;
+        const sourceSizeBytes = Number(liveProgress?.sourceSizeBytes ?? job.sourceSizeBytes ?? 0);
+        const transferredBytes = Number(liveProgress?.transferredBytes ?? job.transferredBytes ?? 0);
+        const computedProgress = sourceSizeBytes > 0
+            ? Number(((transferredBytes / sourceSizeBytes) * 100).toFixed(1))
+            : Number(liveProgress?.progress ?? job.progress ?? 0);
+
         return {
             jobId: id,
-            status: job.status,
-            progress: liveProgress?.progress ?? job.progress,
-            transferredBytes: liveProgress?.transferredBytes ?? job.transferredBytes,
+            status: liveProgress?.status ?? job.status,
+            progress: liveProgress?.progress ?? computedProgress,
+            transferredBytes,
+            sourceSizeBytes,
+            remainingBytes: Math.max(0, sourceSizeBytes - transferredBytes),
             badSectors: liveProgress?.badSectors ?? job.badSectors,
             updatedAt: liveProgress?.updatedAt ?? job.updatedAt,
         };
+    }
+
+    async listSources(onlyUsb = false): Promise<ImagingSourceDevice[]> {
+        if (process.platform !== 'win32') {
+            return [];
+        }
+
+        const script = [
+            '$ErrorActionPreference = "Stop"',
+            'Get-CimInstance Win32_LogicalDisk | Select-Object DeviceID, VolumeName, DriveType, Size, FreeSpace | ConvertTo-Json -Compress',
+        ].join('; ');
+
+        try {
+            const { stdout } = await execFileAsync(
+                'powershell.exe',
+                ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+                { windowsHide: true },
+            );
+
+            const raw = stdout?.trim();
+            if (!raw) return [];
+
+            const parsed = JSON.parse(raw);
+            const disks = Array.isArray(parsed) ? parsed : [parsed];
+
+            const mapDriveType = (n: number): ImagingSourceDevice['driveType'] => {
+                switch (n) {
+                    case 2: return 'removable';
+                    case 3: return 'fixed';
+                    case 4: return 'network';
+                    case 5: return 'cdrom';
+                    case 6: return 'ramdisk';
+                    default: return 'unknown';
+                }
+            };
+
+            const items: ImagingSourceDevice[] = disks
+                .filter((d: any) => typeof d?.DeviceID === 'string' && d.DeviceID.length >= 2)
+                .map((d: any) => {
+                    const path = `${String(d.DeviceID).replace(/\\+$/, '')}\\`;
+                    const driveType = mapDriveType(Number(d.DriveType));
+                    const volume = String(d.VolumeName ?? '').trim();
+                    const label = volume ? `${path} (${volume})` : path;
+
+                    return {
+                        path,
+                        label,
+                        driveType,
+                        sizeBytes: Number.isFinite(Number(d.Size)) ? Number(d.Size) : undefined,
+                        freeBytes: Number.isFinite(Number(d.FreeSpace)) ? Number(d.FreeSpace) : undefined,
+                        isUsbLikely: driveType === 'removable',
+                    };
+                })
+                .filter((i) => i.driveType === 'fixed' || i.driveType === 'removable');
+
+            return onlyUsb ? items.filter((i) => i.isUsbLikely) : items;
+        } catch (error: any) {
+            this.logger.warn(`Failed to enumerate imaging sources: ${error?.message ?? error}`);
+            return [];
+        }
     }
 }

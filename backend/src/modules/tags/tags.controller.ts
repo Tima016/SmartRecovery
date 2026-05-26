@@ -11,7 +11,7 @@ export class TagsController {
     constructor(private readonly tagsService: TagsService) { }
 
     @Post()
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async createTag(@Body() body: { caseId: string; name: string; color?: string }, @Req() req: any) {
         return this.tagsService.createTag(
             body.caseId,
@@ -23,14 +23,14 @@ export class TagsController {
     }
 
     @Get()
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async getTagsByCase(@Query('caseId') caseId: string) {
         if (!caseId) return [];
         return this.tagsService.getTagsByCase(caseId);
     }
 
     @Post('assign')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async assignTag(@Body() body: { tagId: string; entityType: string; entityId: string }, @Req() req: any) {
         return this.tagsService.assignTag(
             body.tagId,
@@ -42,7 +42,7 @@ export class TagsController {
     }
 
     @Get('assigned/:entityType/:entityId')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async getAssignedTags(
         @Param('entityType') entityType: string,
         @Param('entityId') entityId: string
@@ -51,7 +51,7 @@ export class TagsController {
     }
 
     @Delete('assign/:id')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async removeAssignment(@Param('id') id: string, @Req() req: any) {
         return this.tagsService.removeAssignment(id, req.user.id, req.ip);
     }

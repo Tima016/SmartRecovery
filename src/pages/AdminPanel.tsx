@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Shield, Users, ScrollText, ToggleLeft, ToggleRight, ChevronDown, Terminal, Loader2 } from 'lucide-react';
+import { Shield, Users, ScrollText, FolderOpen, ToggleLeft, ToggleRight, ChevronDown, Terminal, Loader2, Eye } from 'lucide-react';
 import { useAuth, type Role } from '../context/AuthContext';
 import { useTranslation } from '../i18n/useTranslation';
 import { usersApi } from '../api/users.api';
 import { auditApi } from '../api/audit.api';
+import { casesApi } from '../api/cases.api';
+import { useNavigate } from 'react-router-dom';
 
 // ─── Types ────────────────────────────────────────────────────────────
 interface AdminUser {
@@ -16,6 +18,18 @@ interface AdminUser {
     createdAt?: string;
 }
 
+interface AdminCase {
+    id: string;
+    caseNumber?: string;
+    title?: string;
+    status: string;
+    priority?: string;
+    createdBy?: { firstName?: string; lastName?: string };
+    createdAt?: string;
+    openedAt?: string;
+    _count?: { evidence?: number };
+}
+
 interface LogEntry {
     time: string;
     event: string;
@@ -25,18 +39,36 @@ interface LogEntry {
 
 const roleColor: Record<Role, string> = {
     ADMIN: 'text-[#f59e0b] bg-amber-500/10 border-amber-500/25',
-    ANALYST: 'text-accent-cyan bg-accent-cyan/10 border-accent-cyan/25',
-    INVESTIGATOR: 'text-accent-cyan bg-accent-cyan/10 border-accent-cyan/25',
-    AUDITOR: 'text-purple-400 bg-purple-500/10 border-purple-500/25'
+    USER: 'text-accent-cyan bg-accent-cyan/10 border-accent-cyan/25',
 };
 
-const availableRoles: Role[] = ['ADMIN', 'ANALYST', 'INVESTIGATOR', 'AUDITOR'];
+const availableRoles: Role[] = ['ADMIN', 'USER'];
+
+const statusDot: Record<string, string> = {
+    CREATED: 'info', IMAGING: 'warn', HASHING: 'warn', SCANNING: 'warn',
+    ANALYZING: 'warn', READY: 'ok', ERROR: 'error', CLOSED: 'info', ARCHIVED: 'info',
+};
+
+const statusText: Record<string, string> = {
+    CREATED: 'text-[#3D7EBF]', IMAGING: 'text-[#D97706]', HASHING: 'text-[#D97706]',
+    SCANNING: 'text-[#D97706]', ANALYZING: 'text-[#D97706]', READY: 'text-[#00C896]',
+    ERROR: 'text-[#C0392B]', CLOSED: 'text-[#6B7280]', ARCHIVED: 'text-[#6B7280]',
+};
+
+const priorityColor: Record<string, string> = {
+    CRITICAL: 'bg-red-500/15 text-red-400 border-red-500/30',
+    HIGH: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+    MEDIUM: 'bg-slate-500/10 text-slate-300 border-slate-500/20',
+    LOW: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
+};
 
 export default function AdminPanel() {
     const { user: currentUser } = useAuth();
     const { t } = useTranslation();
-    const [tab, setTab] = useState<'users' | 'logs'>('users');
+    const navigate = useNavigate();
+    const [tab, setTab] = useState<'users' | 'cases' | 'logs'>('users');
     const [users, setUsers] = useState<AdminUser[]>([]);
+    const [cases, setCases] = useState<AdminCase[]>([]);
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -45,9 +77,10 @@ export default function AdminPanel() {
     const fetchData = async () => {
         try {
             setLoading(true);
-            const [usersRes, logsRes] = await Promise.allSettled([
+            const [usersRes, logsRes, casesRes] = await Promise.allSettled([
                 usersApi.getAll(),
                 auditApi.getLogs({ limit: 50 }),
+                casesApi.getAll(),
             ]);
 
             const usersData = usersRes.status === 'fulfilled' ? usersRes.value.data : [];
@@ -57,7 +90,7 @@ export default function AdminPanel() {
                 email: u.email,
                 firstName: u.firstName ?? '',
                 lastName: u.lastName ?? '',
-                role: u.role ?? 'ANALYST',
+                role: u.role ?? 'USER',
                 isActive: u.isActive ?? u.active ?? true,
                 createdAt: u.createdAt ?? '—',
             })));
@@ -69,6 +102,20 @@ export default function AdminPanel() {
                 event: l.action ?? l.event ?? '—',
                 actor: l.actor ?? l.user ?? l.email ?? '—',
                 detail: typeof l.details === 'string' ? l.details : (l.detail ?? JSON.stringify(l.details ?? '')),
+            })));
+
+            const casesData = casesRes.status === 'fulfilled' ? casesRes.value : [];
+            const caseList = Array.isArray(casesData) ? casesData : (casesData?.data ?? []);
+            setCases(caseList.map((c: any) => ({
+                id: c.id,
+                caseNumber: c.caseNumber ?? c.id,
+                title: c.title ?? c.name ?? 'Untitled Case',
+                status: (c.status ?? 'CREATED').toUpperCase(),
+                priority: (c.priority ?? 'MEDIUM').toUpperCase(),
+                createdBy: c.createdBy,
+                createdAt: c.openedAt ?? c.createdAt ?? '—',
+                openedAt: c.openedAt,
+                _count: c._count,
             })));
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : 'Failed to load admin data');
@@ -82,7 +129,11 @@ export default function AdminPanel() {
     const handleToggleActive = async (u: AdminUser) => {
         if (u.id === currentUser?.id) return;
         try {
-            await usersApi.update(u.id, { isActive: !u.isActive });
+            if (u.isActive !== false) {
+                await usersApi.deactivate(u.id);
+            } else {
+                await usersApi.activate(u.id);
+            }
             await fetchData();
         } catch {
             // Silently handle — user will see no change
@@ -105,6 +156,14 @@ export default function AdminPanel() {
     const getUserDate = (u: AdminUser) => {
         if (!u.createdAt || u.createdAt === '—') return '—';
         try { return new Date(u.createdAt).toISOString().split('T')[0]; } catch { return '—'; }
+    };
+
+    const getCaseCreator = (c: AdminCase) =>
+        c.createdBy ? `${c.createdBy.firstName ?? ''} ${c.createdBy.lastName ?? ''}`.trim() : '—';
+    const getCaseDate = (c: AdminCase) => {
+        const d = c.openedAt ?? c.createdAt;
+        if (!d || d === '—') return '—';
+        try { return new Date(d).toISOString().split('T')[0]; } catch { return '—'; }
     };
 
     if (loading) {
@@ -130,13 +189,18 @@ export default function AdminPanel() {
                 <div className="flex items-center gap-2.5">
                     <Shield className="w-5 h-5 text-amber-400" />
                     <h1 className="text-text-primary font-semibold text-base tracking-tight">{t('admin.title')}</h1>
-                    <span className="tag bg-amber-500/10 border border-amber-500/25 text-amber-400 text-[10px] px-2">ADMIN ONLY</span>
+                    <span className="tag bg-amber-500/10 border border-amber-500/25 text-amber-400 text-[10px] px-2">SUPERADMIN</span>
+                </div>
+                <div className="flex items-center gap-3 text-[10px] mono text-text-muted">
+                    <span>{users.length} users</span>
+                    <span>•</span>
+                    <span>{cases.length} cases</span>
                 </div>
             </div>
 
             {/* Tabs */}
             <div className="flex items-center gap-1 flex-shrink-0">
-                {(['users', 'logs'] as const).map(tb => (
+                {(['users', 'cases', 'logs'] as const).map(tb => (
                     <button
                         key={tb}
                         onClick={() => { setTab(tb); }}
@@ -145,14 +209,17 @@ export default function AdminPanel() {
                             : 'text-text-secondary hover:text-text-primary bg-bg-elevated border border-transparent'
                             }`}
                     >
-                        {tb === 'users' ? <Users className="w-3.5 h-3.5" /> : <ScrollText className="w-3.5 h-3.5" />}
-                        {t(tb === 'users' ? 'admin.users' : 'admin.logs')}
+                        {tb === 'users' ? <Users className="w-3.5 h-3.5" /> :
+                         tb === 'cases' ? <FolderOpen className="w-3.5 h-3.5" /> :
+                         <ScrollText className="w-3.5 h-3.5" />}
+                        {tb === 'users' ? t('admin.users') : tb === 'cases' ? 'Cases' : t('admin.logs')}
                     </button>
                 ))}
             </div>
 
             {/* Content */}
             <div className="flex-1 overflow-hidden glass-panel rounded-sm flex flex-col">
+                {/* ─── USERS TAB ─── */}
                 {tab === 'users' && (
                     <>
                         {/* Header row */}
@@ -196,7 +263,7 @@ export default function AdminPanel() {
                                                 }
                                             }}
                                             disabled={u.id === currentUser?.id}
-                                            className={`flex items-center gap-1 tag border ${roleColor[u.role] ?? roleColor.ANALYST} text-[10px] disabled:opacity-60 disabled:cursor-default`}
+                                            className={`flex items-center gap-1 tag border ${roleColor[u.role] ?? roleColor.USER} text-[10px] disabled:opacity-60 disabled:cursor-default`}
                                         >
                                             {u.role}
                                             {u.id !== currentUser?.id && <ChevronDown className="w-2.5 h-2.5" />}
@@ -248,6 +315,57 @@ export default function AdminPanel() {
                     </>
                 )}
 
+                {/* ─── CASES TAB ─── */}
+                {tab === 'cases' && (
+                    <>
+                        {/* Header row */}
+                        <div className="grid gap-3 px-4 py-2 bg-bg-elevated border-b border-bg-border text-[10px] mono text-text-muted uppercase tracking-wide flex-shrink-0"
+                            style={{ gridTemplateColumns: '1.2fr 2.2fr 1fr 0.8fr 0.7fr 1fr 60px' }}>
+                            <span>Case ID</span>
+                            <span>Title</span>
+                            <span>Creator</span>
+                            <span>Status</span>
+                            <span>Priority</span>
+                            <span>Created</span>
+                            <span>Actions</span>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto divide-y divide-bg-border/30">
+                            {cases.length > 0 ? cases.map(c => {
+                                const status = c.status;
+                                const priority = c.priority ?? 'MEDIUM';
+                                return (
+                                    <div
+                                        key={c.id}
+                                        className="grid gap-3 px-4 py-2.5 items-center hover:bg-bg-elevated/40 transition-colors"
+                                        style={{ gridTemplateColumns: '1.2fr 2.2fr 1fr 0.8fr 0.7fr 1fr 60px' }}
+                                    >
+                                        <span className="text-accent-cyan text-[11px] mono font-medium truncate">{c.caseNumber}</span>
+                                        <span className="text-text-primary text-xs truncate">{c.title}</span>
+                                        <span className="text-text-secondary text-xs truncate">{getCaseCreator(c)}</span>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className={`status-dot ${statusDot[status] ?? 'info'}`} />
+                                            <span className={`text-[10px] mono ${statusText[status] ?? 'text-text-muted'}`}>{status}</span>
+                                        </div>
+                                        <span className={`tag border text-[9px] self-start ${priorityColor[priority] ?? priorityColor.MEDIUM}`}>{priority}</span>
+                                        <span className="text-text-muted text-xs mono">{getCaseDate(c)}</span>
+                                        <button
+                                            onClick={() => navigate(`/cases/${c.id}`)}
+                                            className="flex items-center gap-1 text-[10px] mono px-2 py-1.5 rounded-sm border bg-accent-cyan/10 border-accent-cyan/20 text-accent-cyan hover:bg-accent-cyan/20 transition-all"
+                                        >
+                                            <Eye className="w-3 h-3" />
+                                            View
+                                        </button>
+                                    </div>
+                                );
+                            }) : (
+                                <div className="flex items-center justify-center h-24 text-text-muted text-xs mono">No cases found</div>
+                            )}
+                        </div>
+                    </>
+                )}
+
+                {/* ─── LOGS TAB ─── */}
                 {tab === 'logs' && (
                     <>
                         <div className="flex items-center gap-2 px-4 py-2.5 border-b border-bg-border bg-bg-elevated flex-shrink-0">

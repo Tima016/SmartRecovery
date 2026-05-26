@@ -1,6 +1,11 @@
-import { useState, useEffect } from 'react';
-import { Bookmark, Trash2, FileText, Clock, Microscope, File, Edit3, Check, X, Briefcase } from 'lucide-react';
+﻿import { useState, useEffect } from 'react';
+import {
+    Bookmark, Trash2, FileText, Clock, Microscope, File, Edit3,
+    Check, X, Briefcase, HardDrive,
+} from 'lucide-react';
 import { workspaceApi, type Bookmark as BookmarkType } from '../../api/workspace.api';
+import { casesApi } from '../../api/cases.api';
+import { evidenceApi } from '../../api/evidence.api';
 import toast from 'react-hot-toast';
 
 const ENTITY_ICONS: Record<string, React.ElementType> = {
@@ -18,6 +23,17 @@ const SEVERITY_COLORS: Record<string, string> = {
     EVIDENCE: 'border-l-green-400',
     CASE: 'border-l-blue-400',
 };
+
+const TABS = ['ALL', 'FILE', 'ARTIFACT', 'TIMELINE', 'EVIDENCE', 'CASE'] as const;
+
+function bytesToHuman(bytes: number | string): string {
+    const n = typeof bytes === 'string' ? parseInt(bytes, 10) : bytes;
+    if (isNaN(n)) return '—';
+    if (n >= 1e12) return `${(n / 1e12).toFixed(2)} TB`;
+    if (n >= 1e9) return `${(n / 1e9).toFixed(2)} GB`;
+    if (n >= 1e6) return `${(n / 1e6).toFixed(2)} MB`;
+    return `${(n / 1e3).toFixed(1)} KB`;
+}
 
 function EditableNote({ note, onSave }: { note?: string; onSave: (n: string) => void }) {
     const [editing, setEditing] = useState(false);
@@ -51,24 +67,48 @@ function EditableNote({ note, onSave }: { note?: string; onSave: (n: string) => 
     );
 }
 
-const TABS = ['ALL', 'FILE', 'ARTIFACT', 'TIMELINE', 'EVIDENCE', 'CASE'] as const;
-
 export default function Workspace() {
     const [bookmarks, setBookmarks] = useState<BookmarkType[]>([]);
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState<string>('ALL');
 
+    const [recentCases, setRecentCases] = useState<any[]>([]);
+    const [recentEvidence, setRecentEvidence] = useState<any[]>([]);
+
     useEffect(() => {
-        fetchBookmarks();
+        fetchWorkspaceData();
     }, []);
 
-    async function fetchBookmarks() {
+    async function fetchWorkspaceData() {
         try {
             setLoading(true);
-            const data = await workspaceApi.getBookmarks();
-            setBookmarks(data);
+            const [bookmarkRes, casesRes] = await Promise.allSettled([
+                workspaceApi.getBookmarks(),
+                casesApi.getAll(),
+            ]);
+
+            if (bookmarkRes.status === 'fulfilled') {
+                setBookmarks(bookmarkRes.value);
+            } else {
+                toast.error('Failed to load bookmarks');
+            }
+
+            if (casesRes.status === 'fulfilled') {
+                const c = Array.isArray(casesRes.value) ? casesRes.value : (casesRes.value?.data ?? []);
+                setRecentCases(c.slice(0, 4));
+            }
+
+            const firstCaseId = casesRes.status === 'fulfilled'
+                ? (Array.isArray(casesRes.value) ? casesRes.value?.[0]?.id : casesRes.value?.data?.[0]?.id)
+                : undefined;
+
+            if (firstCaseId) {
+                const ev = await evidenceApi.getByCaseId(firstCaseId);
+                const list = Array.isArray(ev) ? ev : (ev?.data ?? []);
+                setRecentEvidence(list.slice(0, 6));
+            }
         } catch {
-            toast.error('Failed to load bookmarks');
+            toast.error('Failed to load workspace data');
         } finally {
             setLoading(false);
         }
@@ -101,7 +141,6 @@ export default function Workspace() {
 
     return (
         <div className="flex flex-col h-full p-6 gap-6">
-            {/* Header */}
             <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-lg bg-accent-cyan/10 border border-accent-cyan/20 flex items-center justify-center">
                     <Briefcase className="w-4 h-4 text-accent-cyan" />
@@ -114,7 +153,6 @@ export default function Workspace() {
                 </div>
             </div>
 
-            {/* Tabs */}
             <div className="flex items-center gap-1 border-b pb-0" style={{ borderColor: 'var(--border)' }}>
                 {TABS.map(tab => {
                     const count = tab === 'ALL' ? bookmarks.length : (countByType[tab] ?? 0);
@@ -133,22 +171,49 @@ export default function Workspace() {
                 })}
             </div>
 
-            {/* Content */}
             {loading ? (
                 <div className="flex-1 flex items-center justify-center">
                     <div className="w-6 h-6 border-2 border-accent-cyan/20 border-t-accent-cyan rounded-full animate-spin" />
                 </div>
             ) : filtered.length === 0 ? (
-                <div className="flex-1 flex flex-col items-center justify-center gap-4">
-                    <div className="w-16 h-16 rounded-full bg-bg-elevated border border-bg-border flex items-center justify-center">
-                        <Bookmark className="w-7 h-7 text-text-muted" />
-                    </div>
-                    <div className="text-center">
-                        <p className="text-text-secondary font-medium">No bookmarks yet</p>
-                        <p className="text-text-muted text-sm mt-1">
-                            Right-click files, artifacts or events to bookmark them.<br />
-                            They'll appear here for quick reference.
+                <div className="flex-1 grid grid-cols-2 gap-4 auto-rows-min">
+                    <div className="rounded-lg border border-bg-border p-5 bg-bg-panel">
+                        <div className="flex items-center gap-2 mb-2">
+                            <Bookmark className="w-4 h-4 text-accent-cyan" />
+                            <h3 className="text-text-primary text-sm font-semibold">No bookmarks yet</h3>
+                        </div>
+                        <p className="text-text-muted text-xs leading-relaxed">
+                            Files, timeline events and artifacts that you bookmark will appear here.
                         </p>
+                    </div>
+
+                    <div className="rounded-lg border border-bg-border p-5 bg-bg-panel">
+                        <div className="flex items-center gap-2 mb-2">
+                            <FileText className="w-4 h-4 text-accent-cyan" />
+                            <h3 className="text-text-primary text-sm font-semibold">Recent Cases</h3>
+                        </div>
+                        <div className="space-y-1.5">
+                            {recentCases.length > 0 ? recentCases.map((c: any) => (
+                                <div key={c.id} className="text-xs mono text-text-secondary truncate">
+                                    {c.caseNumber ?? c.id} · {c.title ?? 'Untitled Case'}
+                                </div>
+                            )) : <div className="text-xs mono text-text-muted">No case data available</div>}
+                        </div>
+                    </div>
+
+                    <div className="col-span-2 rounded-lg border border-bg-border p-5 bg-bg-panel">
+                        <div className="flex items-center gap-2 mb-2">
+                            <HardDrive className="w-4 h-4 text-accent-cyan" />
+                            <h3 className="text-text-primary text-sm font-semibold">Recent Evidence</h3>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            {recentEvidence.length > 0 ? recentEvidence.map((e: any) => (
+                                <div key={e.id} className="rounded border border-bg-border bg-bg-elevated/40 px-3 py-2">
+                                    <div className="text-xs mono text-text-primary truncate">{e.originalFilename ?? e.name}</div>
+                                    <div className="text-[10px] mono text-text-muted">{bytesToHuman(e.sizeBytes ?? 0)}</div>
+                                </div>
+                            )) : <div className="text-xs mono text-text-muted">No evidence data available</div>}
+                        </div>
                     </div>
                 </div>
             ) : (

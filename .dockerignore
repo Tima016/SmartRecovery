@@ -3,3 +3,10 @@
 .git
 .env
 *.log
+*.img
+*.dd
+*.raw
+*.E01
+*.e01
+*.001
+report-test.pdf

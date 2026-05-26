@@ -107,12 +107,18 @@ export class CasesService {
         page = 1,
         limit = 20,
         filters?: { status?: CaseStatus; assignedToId?: string; createdById?: string },
+        user?: { id: string; role: string },
     ) {
         const skip = (page - 1) * limit;
         const where: any = {};
         if (filters?.status) where.status = filters.status;
         if (filters?.assignedToId) where.assignedToId = filters.assignedToId;
         if (filters?.createdById) where.createdById = filters.createdById;
+
+        // USER can only see their own cases, ADMIN sees all
+        if (user && user.role !== 'ADMIN') {
+            where.createdById = user.id;
+        }
 
         const [data, total] = await this.prisma.$transaction([
             this.prisma.case.findMany({
@@ -202,8 +208,8 @@ export class CasesService {
         await this.findOne(id);
         const investigator = await this.prisma.user.findUnique({ where: { id: dto.investigatorId } });
         if (!investigator) throw new NotFoundException('Investigator not found');
-        if (investigator.role !== UserRole.INVESTIGATOR && investigator.role !== UserRole.ADMIN) {
-            throw new ForbiddenException('User must be an INVESTIGATOR or ADMIN');
+        if (investigator.role !== UserRole.USER && investigator.role !== UserRole.ADMIN) {
+            throw new ForbiddenException('User must be a USER or ADMIN');
         }
 
         const updated = await this.prisma.case.update({
@@ -254,10 +260,21 @@ export class CasesService {
     async getFileSystem(caseId: string, parentPath: string = '/', page = 1, limit = 100) {
         await this.findOne(caseId);
 
+        let resolvedParentPath = parentPath;
+        if (parentPath && !parentPath.startsWith('/')) {
+            const parentEntry = await (this.prisma as any).fileSystemEntry.findFirst({
+                where: { id: parentPath, caseId },
+                select: { path: true, isDirectory: true },
+            });
+            if (parentEntry?.isDirectory) {
+                resolvedParentPath = parentEntry.path;
+            }
+        }
+
         const skip = (page - 1) * limit;
         const [data, total] = await this.prisma.$transaction([
             (this.prisma as any).fileSystemEntry.findMany({
-                where: { caseId, parentPath },
+                where: { caseId, parentPath: resolvedParentPath },
                 skip,
                 take: limit,
                 orderBy: [
@@ -266,9 +283,46 @@ export class CasesService {
                 ],
             }),
             (this.prisma as any).fileSystemEntry.count({
-                where: { caseId, parentPath },
+                where: { caseId, parentPath: resolvedParentPath },
             }),
         ]);
+
+        if (total === 0 && resolvedParentPath === '/') {
+            const carved = await this.prisma.recoveredFile.findMany({
+                where: { caseId },
+                take: limit,
+                orderBy: { confidence: 'desc' },
+            });
+            const carvedEntries = carved.map((f) => ({
+                id: f.id,
+                caseId,
+                evidenceId: f.evidenceId,
+                path: `/${f.filename}`,
+                name: f.filename,
+                isDirectory: false,
+                isDeleted: false,
+                sizeBytes: f.sizeBytes?.toString() ?? '0',
+                createdAt: f.recoveredAt,
+                modifiedAt: f.recoveredAt,
+                accessedAt: f.recoveredAt,
+                mftChangedAt: null,
+                parentPath: '/',
+                permissions: null,
+                uid: null,
+                gid: null,
+                inode: null,
+                fileType: f.mimeType,
+                fsType: 'CARVED',
+                attributes: null,
+            }));
+            return {
+                data: carvedEntries,
+                total: carvedEntries.length,
+                page,
+                limit,
+                pages: carvedEntries.length > 0 ? 1 : 0,
+            };
+        }
 
         return { data, total, page, limit, pages: Math.ceil(total / limit) };
     }
@@ -289,6 +343,131 @@ export class CasesService {
             }),
         ]);
         return { data, total, page, limit, pages: Math.ceil(total / limit) };
+    }
+
+    async keywordSearch(caseId: string, keyword: string) {
+        const q = (keyword ?? '').trim();
+        if (!q) {
+            return {
+                keyword: q,
+                totalHits: 0,
+                files: [],
+                artifacts: [],
+                timelineEvents: [],
+            };
+        }
+
+        const artifactOr: any[] = [
+            { source: { contains: q, mode: 'insensitive' } },
+        ];
+
+        const upperQ = q.toUpperCase();
+        const artifactTypes = [
+            'BROWSER_HISTORY',
+            'REGISTRY_HIVE',
+            'EVENT_LOG',
+            'PREFETCH',
+            'USB_LOG',
+            'NETWORK_CAPTURE',
+        ];
+        if (artifactTypes.includes(upperQ)) {
+            artifactOr.push({ type: upperQ });
+        }
+
+        const [files, artifacts, timeline] = await Promise.all([
+            this.prisma.recoveredFile.findMany({
+                where: {
+                    caseId,
+                    filename: { contains: q, mode: 'insensitive' },
+                },
+                take: 100,
+            }),
+            this.prisma.artifact.findMany({
+                where: {
+                    caseId,
+                    OR: artifactOr,
+                },
+                take: 50,
+            }),
+            this.prisma.timelineEvent.findMany({
+                where: {
+                    caseId,
+                    description: { contains: q, mode: 'insensitive' },
+                },
+                take: 50,
+            }),
+        ]);
+
+        return {
+            keyword: q,
+            totalHits: files.length + artifacts.length + timeline.length,
+            files: files.map(f => ({ ...f, sizeBytes: f.sizeBytes?.toString() })),
+            artifacts,
+            timelineEvents: timeline,
+        };
+    }
+
+    async hashLookup(caseId: string, hash: string) {
+        const hashLower = (hash ?? '').toLowerCase().trim();
+        if (!hashLower) {
+            return { hash, found: false, files: [] };
+        }
+
+        const files = await this.prisma.recoveredFile.findMany({
+            where: {
+                caseId,
+                OR: [
+                    { sha256: hashLower },
+                    { md5: hashLower },
+                    { evidenceHash: hashLower },
+                ],
+            },
+        });
+
+        return {
+            hash,
+            found: files.length > 0,
+            files: files.map(f => ({ ...f, sizeBytes: f.sizeBytes?.toString() })),
+        };
+    }
+
+    async getDashboardStats(userId: string, userRole?: string) {
+        const caseFilter = userRole !== 'ADMIN' ? { createdById: userId } : {};
+
+        const [totalCases, activeCases, totalEvidence, totalCarved] = await Promise.all([
+            this.prisma.case.count({ where: caseFilter }),
+            this.prisma.case.count({
+                where: { ...caseFilter, status: { in: [CaseStatus.IMAGING, CaseStatus.HASHING, CaseStatus.SCANNING, CaseStatus.ANALYZING] } },
+            }),
+            this.prisma.evidence.count({
+                where: userRole !== 'ADMIN' ? { case: { createdById: userId } } : {},
+            }),
+            this.prisma.recoveredFile.count({
+                where: userRole !== 'ADMIN' ? { case: { createdById: userId } } : {},
+            }),
+        ]);
+
+        const recentCases = await this.prisma.case.findMany({
+            where: caseFilter,
+            orderBy: { updatedAt: 'desc' },
+            take: 5,
+            include: {
+                createdBy: { select: { firstName: true, lastName: true } },
+                _count: { select: { evidence: true } },
+            },
+        });
+
+        return {
+            totalCases,
+            activeCases,
+            totalEvidence,
+            totalCarved,
+            recentCases: recentCases.map(c => ({
+                ...c,
+                createdByName: `${c.createdBy.firstName} ${c.createdBy.lastName}`,
+                evidenceCount: c._count.evidence,
+            })),
+        };
     }
 
     private caseIncludes() {

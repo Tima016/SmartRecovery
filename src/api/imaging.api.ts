@@ -13,6 +13,14 @@ export const imagingApi = {
         return response.data;
     },
 
+    /** List available local sources (fixed disks + removable USB volumes) */
+    listSources: async (usbOnly = false) => {
+        const response = await apiClient.get('/imaging/sources', {
+            params: usbOnly ? { usbOnly: true } : undefined,
+        });
+        return response.data;
+    },
+
     /**
      * Start a new imaging job.
      * Body: { caseId, sourceDrive, sourceSizeBytes?, imageFormat? }

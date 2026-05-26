@@ -247,15 +247,6 @@ html:not(.dark) .nav-active {
 }
 
 /* ═══════════════════════════════════════
-   SIDEBAR NAV ACTIVE
-   ═══════════════════════════════════════ */
-.nav-active {
-  background: rgba(0, 200, 150, 0.07);
-  border-left: 2px solid var(--accent-primary);
-  color: var(--accent-primary);
-}
-
-/* ═══════════════════════════════════════
    TYPOGRAPHY UTILITIES
    ═══════════════════════════════════════ */
 .mono {

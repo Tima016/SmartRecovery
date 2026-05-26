@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+*.log
+.env
+.env.local
+*.img
+*.dd
+*.raw
+*.E01
+*.e01
+*.001

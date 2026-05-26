@@ -157,7 +157,7 @@ export default function RegisterPage() {
                         <div>
                             <label className="block text-[11px] mono text-text-muted mb-1.5 tracking-wide">{t('auth.role').toUpperCase()}</label>
                             <div className="w-full bg-bg-elevated border border-bg-border rounded-sm px-3.5 py-2.5 text-sm text-text-muted mono cursor-not-allowed flex items-center justify-between">
-                                <span>{t('auth.role_investigator')}</span>
+                                <span>USER</span>
                                 <span className="text-[10px] text-text-muted/60">(auto-assigned)</span>
                             </div>
                         </div>

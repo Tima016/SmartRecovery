@@ -208,6 +208,35 @@ export class FileSystemService {
             take: 1000,
         });
 
+        // If no filesystem entries, fall back to carved files so explorer is still usable on raw images.
+        if (entries.length === 0) {
+            const carved = await this.prisma.recoveredFile.findMany({
+                where: { caseId },
+                take: 500,
+                orderBy: { confidence: 'desc' },
+            });
+
+            const carvedEntries = carved.map((f) => ({
+                id: f.id,
+                name: f.filename,
+                path: `/${f.filename}`,
+                parentPath: '/',
+                isDirectory: false,
+                isDeleted: false,
+                sizeBytes: f.sizeBytes?.toString() ?? '0',
+                fileType: f.mimeType,
+                fsType: 'CARVED',
+                createdAt: f.recoveredAt,
+                modifiedAt: f.recoveredAt,
+            }));
+
+            return {
+                caseId,
+                total: carvedEntries.length,
+                entries: carvedEntries,
+            };
+        }
+
         return {
             caseId,
             total: entries.length,
@@ -317,6 +346,17 @@ export class FileSystemService {
 
         if (!evidence) {
             throw new NotFoundException('Associated evidence not found');
+        }
+
+        const attrs = entry.attributes as any;
+        if (attrs?.demoScenario) {
+            const { StreamableFile } = await import('@nestjs/common');
+            if (typeof attrs.previewBase64 === 'string' && attrs.previewBase64.length > 0) {
+                return new StreamableFile(Buffer.from(attrs.previewBase64, 'base64'));
+            }
+            if (typeof attrs.previewText === 'string') {
+                return new StreamableFile(Buffer.from(attrs.previewText, 'utf-8'));
+            }
         }
 
         const buffer = await this.getEvidenceBuffer(evidence);

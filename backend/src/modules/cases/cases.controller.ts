@@ -26,7 +26,7 @@ export class CasesController {
     ) { }
 
     @Post()
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Create a new forensic case' })
     create(@Body() dto: CreateCaseDto, @GetUser('id') userId: string, @Req() req: Request) {
         return this.casesService.create(dto, userId, req.ip);
@@ -43,8 +43,15 @@ export class CasesController {
         @Query('limit') limit = 20,
         @Query('status') status?: CaseStatus,
         @Query('assignedToId') assignedToId?: string,
+        @GetUser() user?: any,
     ) {
-        return this.casesService.findAll(+page, +limit, { status, assignedToId });
+        return this.casesService.findAll(+page, +limit, { status, assignedToId }, user);
+    }
+
+    @Get('dashboard/stats')
+    @ApiOperation({ summary: 'Get dashboard case/evidence/recovery statistics' })
+    getDashboardStats(@GetUser() user: any) {
+        return this.casesService.getDashboardStats(user.id, user.role);
     }
 
     @Get(':id')
@@ -60,7 +67,7 @@ export class CasesController {
     }
 
     @Patch(':id')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Update case details' })
     update(
         @Param('id') id: string,
@@ -72,7 +79,7 @@ export class CasesController {
     }
 
     @Patch(':id/close')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Close a case' })
     close(@Param('id') id: string, @GetUser('id') userId: string, @Req() req: Request) {
@@ -92,7 +99,7 @@ export class CasesController {
     }
 
     @Post(':id/members')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Add a member to the case with permissions' })
     addMember(
         @Param('id') id: string,
@@ -139,7 +146,7 @@ export class CasesController {
     }
 
     @Get(':id/audit')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Paginated Chain of Custody and Audit Trail' })
     @ApiQuery({ name: 'page', required: false, type: Number })
     @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -149,6 +156,24 @@ export class CasesController {
         @Query('limit') limit = 100,
     ) {
         return this.casesService.getAuditLogs(id, +page, +limit);
+    }
+
+    @Get(':id/search')
+    @ApiOperation({ summary: 'Keyword search across recovered files, artifacts, and timeline events' })
+    keywordSearch(
+        @Param('id') id: string,
+        @Query('q') keyword: string,
+    ) {
+        return this.casesService.keywordSearch(id, keyword ?? '');
+    }
+
+    @Get(':id/hash-lookup')
+    @ApiOperation({ summary: 'Lookup recovered files by hash value (SHA-256/MD5)' })
+    hashLookup(
+        @Param('id') id: string,
+        @Query('hash') hash: string,
+    ) {
+        return this.casesService.hashLookup(id, hash ?? '');
     }
 
     @Get(':id/global-search')

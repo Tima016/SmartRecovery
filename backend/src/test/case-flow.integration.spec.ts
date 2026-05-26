@@ -15,6 +15,7 @@ import { PrismaModule } from '../common/prisma/prisma.module';
 
 describe('Case Flow Integration', () => {
     let prisma: PrismaService;
+    let existingUserId: string;
 
     beforeAll(async () => {
         const module: TestingModule = await Test.createTestingModule({
@@ -26,6 +27,12 @@ describe('Case Flow Integration', () => {
 
         prisma = module.get<PrismaService>(PrismaService);
         await prisma.$connect();
+
+        const users = await prisma.$queryRaw<Array<{ id: string }>>`SELECT id FROM users LIMIT 1`;
+        if (!users.length) {
+            throw new Error('Integration tests require at least one user in database.');
+        }
+        existingUserId = users[0].id;
     });
 
     afterAll(async () => {
@@ -40,18 +47,6 @@ describe('Case Flow Integration', () => {
 
     // ─── Case CRUD ───────────────────────────────────────────────────
     it('should create and retrieve a case', async () => {
-        // Clean up any existing test user
-        const email = `integration-test-${Date.now()}@dfip-test.invalid`;
-        const user = await prisma.user.create({
-            data: {
-                email,
-                passwordHash: '$2b$10$testHash',
-                firstName: 'Test',
-                lastName: 'User',
-                role: 'INVESTIGATOR',
-            },
-        });
-
         const caseNumber = `TEST-${Date.now()}`;
         const testCase = await prisma.case.create({
             data: {
@@ -60,7 +55,7 @@ describe('Case Flow Integration', () => {
                 status: 'CREATED',
                 priority: 'HIGH',
                 classification: 'UNCLASSIFIED',
-                createdById: user.id,
+                createdById: existingUserId,
             },
         });
 
@@ -70,15 +65,10 @@ describe('Case Flow Integration', () => {
 
         // Cleanup
         await prisma.case.delete({ where: { id: testCase.id } });
-        await prisma.user.delete({ where: { id: user.id } });
     });
 
     // ─── RecoveredFile table ─────────────────────────────────────────
     it('should create a RecoveredFile record', async () => {
-        const email = `rf-test-${Date.now()}@dfip-test.invalid`;
-        const user = await prisma.user.create({
-            data: { email, passwordHash: 'x', firstName: 'RF', lastName: 'Test', role: 'INVESTIGATOR' },
-        });
         const testCase = await prisma.case.create({
             data: {
                 caseNumber: `RF-${Date.now()}`,
@@ -86,7 +76,7 @@ describe('Case Flow Integration', () => {
                 status: 'CREATED',
                 priority: 'MEDIUM',
                 classification: 'UNCLASSIFIED',
-                createdById: user.id,
+                createdById: existingUserId,
             },
         });
 
@@ -112,15 +102,10 @@ describe('Case Flow Integration', () => {
 
         await prisma.recoveredFile.delete({ where: { id: rf.id } });
         await prisma.case.delete({ where: { id: testCase.id } });
-        await prisma.user.delete({ where: { id: user.id } });
     });
 
     // ─── Correlation table ───────────────────────────────────────────
     it('should create a Correlation record', async () => {
-        const email = `corr-test-${Date.now()}@dfip-test.invalid`;
-        const user = await prisma.user.create({
-            data: { email, passwordHash: 'x', firstName: 'Corr', lastName: 'Test', role: 'ANALYST' },
-        });
         const testCase = await prisma.case.create({
             data: {
                 caseNumber: `CORR-${Date.now()}`,
@@ -128,7 +113,7 @@ describe('Case Flow Integration', () => {
                 status: 'CREATED',
                 priority: 'LOW',
                 classification: 'UNCLASSIFIED',
-                createdById: user.id,
+                createdById: existingUserId,
             },
         });
 
@@ -155,15 +140,10 @@ describe('Case Flow Integration', () => {
 
         await prisma.correlation.delete({ where: { id: corr.id } });
         await prisma.case.delete({ where: { id: testCase.id } });
-        await prisma.user.delete({ where: { id: user.id } });
     });
 
     // ─── Fragment table ──────────────────────────────────────────────
     it('should create Fragment records and group them', async () => {
-        const email = `frag-test-${Date.now()}@dfip-test.invalid`;
-        const user = await prisma.user.create({
-            data: { email, passwordHash: 'x', firstName: 'Frag', lastName: 'Test', role: 'ANALYST' },
-        });
         const testCase = await prisma.case.create({
             data: {
                 caseNumber: `FRAG-${Date.now()}`,
@@ -171,7 +151,7 @@ describe('Case Flow Integration', () => {
                 status: 'CREATED',
                 priority: 'LOW',
                 classification: 'UNCLASSIFIED',
-                createdById: user.id,
+                createdById: existingUserId,
             },
         });
 
@@ -198,7 +178,6 @@ describe('Case Flow Integration', () => {
 
         await prisma.fragment.deleteMany({ where: { caseId: testCase.id } });
         await prisma.case.delete({ where: { id: testCase.id } });
-        await prisma.user.delete({ where: { id: user.id } });
     });
 
     // ─── Audit log immutability ──────────────────────────────────────

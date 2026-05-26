@@ -39,17 +39,21 @@ export class HealthService {
 
             // Write check — insert and immediately delete a sentinel row
             const sentinelKey = `__health_${uuidv4()}`;
-            await this.prisma.$executeRawUnsafe(
-                `CREATE TABLE IF NOT EXISTS _health_sentinel (key TEXT PRIMARY KEY, created_at TIMESTAMPTZ DEFAULT now())`,
-            );
-            await this.prisma.$executeRawUnsafe(
-                `INSERT INTO _health_sentinel (key) VALUES ($1) ON CONFLICT DO NOTHING`,
-                sentinelKey,
-            );
-            await this.prisma.$executeRawUnsafe(
-                `DELETE FROM _health_sentinel WHERE key = $1`,
-                sentinelKey,
-            );
+            await this.prisma.$executeRaw`
+                CREATE TABLE IF NOT EXISTS _health_sentinel (
+                    key TEXT PRIMARY KEY,
+                    created_at TIMESTAMPTZ DEFAULT now()
+                )
+            `;
+            await this.prisma.$executeRaw`
+                INSERT INTO _health_sentinel (key)
+                VALUES (${sentinelKey})
+                ON CONFLICT DO NOTHING
+            `;
+            await this.prisma.$executeRaw`
+                DELETE FROM _health_sentinel
+                WHERE key = ${sentinelKey}
+            `;
 
             checks['database'] = { status: 'ok', responseTimeMs: Date.now() - dbStart };
         } catch (err) {

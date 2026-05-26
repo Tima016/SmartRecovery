@@ -7,6 +7,7 @@ import { ProtectedRoute } from './components/routing/ProtectedRoute';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AdminRoute } from './components/routing/AdminRoute';
 import { SocketProvider } from './context/SocketContext';
+import { CaseProvider } from './context/CaseContext';
 import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
@@ -38,7 +39,13 @@ export type ViewId = string;
 function AppShell() {
   const location = useLocation();
   const pathParts = location.pathname.split('/').filter(Boolean);
-  const currentView = pathParts[0] || 'dashboard';
+  // For case-scoped routes like /cases/:caseId/timeline → detect 'timeline'
+  // For /cases/:caseId → detect 'cases'
+  // For /dashboard, /settings, /acquisition → detect first segment
+  const currentView =
+    pathParts[0] === 'cases' && pathParts.length >= 3
+      ? pathParts[2]   // e.g. 'timeline', 'artifacts', 'recovery', 'visualization'
+      : pathParts[0] || 'dashboard';
 
   return (
     <div className="flex h-screen w-screen overflow-hidden" style={{ background: 'var(--bg-primary)' }}>
@@ -85,6 +92,7 @@ export default function App() {
           <ThemeProvider>
             <LanguageProvider>
               <SocketProvider>
+                <CaseProvider>
                 <Routes>
                   {/* Public */}
                   <Route path="/" element={<LandingPage />} />
@@ -106,12 +114,13 @@ export default function App() {
                       <Route path="/cases/:caseId/visualization" element={<Visualization />} />
                       <Route path="/cases/:caseId/reports" element={<Reports />} />
                       <Route path="/cases/:caseId/audit" element={<AuditLog />} />
+                      {/* Standalone routes that redirect to /cases (need a caseId) */}
+                      <Route path="/recovery" element={<Navigate to="/cases" replace />} />
+                      <Route path="/artifacts" element={<Navigate to="/cases" replace />} />
+                      <Route path="/timeline" element={<Navigate to="/cases" replace />} />
+                      <Route path="/visualization" element={<Navigate to="/cases" replace />} />
+                      <Route path="/reports" element={<Navigate to="/cases" replace />} />
                       {/* Standalone routes (work without a selected case) */}
-                      <Route path="/recovery" element={<RecoveryEngine />} />
-                      <Route path="/artifacts" element={<ArtifactAnalysis />} />
-                      <Route path="/timeline" element={<Timeline />} />
-                      <Route path="/visualization" element={<Visualization />} />
-                      <Route path="/reports" element={<Reports />} />
                       <Route path="/acquisition" element={<Acquisition />} />
                       <Route path="/workspace" element={<Workspace />} />
                       <Route path="/settings" element={<Settings />}>
@@ -136,6 +145,7 @@ export default function App() {
                   {/* Fallback */}
                   <Route path="*" element={<Navigate to="/dashboard" replace />} />
                 </Routes>
+                </CaseProvider>
               </SocketProvider>
             </LanguageProvider>
           </ThemeProvider>

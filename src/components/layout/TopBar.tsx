@@ -16,9 +16,11 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useTranslation } from '../../i18n/useTranslation';
-import { useLang } from '../../context/LanguageContext';
 import { apiClient } from '../../api/client';
+import { casesApi } from '../../api/cases.api';
 import type { ViewId } from '../../App';
+import { useCase } from '../../context/CaseContext';
+import { useLang } from '../../context/LanguageContext';
 import GlobalSearch from '../common/GlobalSearch';
 
 interface Props {
@@ -53,6 +55,18 @@ export default function TopBar({ activeView }: Props) {
     const { lang, toggleLang } = useLang();
     const { t } = useTranslation();
     const navigate = useNavigate();
+    const { selectedCaseId, setSelectedCaseId } = useCase();
+    const [cases, setCases] = useState<any[]>([]);
+
+    useEffect(() => {
+        let active = true;
+        casesApi.getAll().then(res => {
+            if (!active) return;
+            const data = Array.isArray(res) ? res : (res.data || []);
+            setCases(data);
+        }).catch(err => console.error('Failed to load cases in TopBar', err));
+        return () => { active = false; };
+    }, []);
 
     // Fetch real backend health data
     useEffect(() => {
@@ -116,6 +130,9 @@ export default function TopBar({ activeView }: Props) {
         return h > 0 ? `${h}h ${m}m` : `${m}m`;
     };
 
+    const displayName = `${user?.firstName ?? ''} ${user?.lastName ?? ''}`.trim() || user?.email || 'User';
+    const initials = ((user?.firstName?.[0] || user?.email?.[0] || 'U')).toUpperCase();
+
     return (
         <>
             <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
@@ -126,11 +143,78 @@ export default function TopBar({ activeView }: Props) {
                 {/* Breadcrumb / Active Case */}
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 min-w-0">
-                        <span className="text-text-muted text-[10px] mono uppercase tracking-widest flex-shrink-0">
-                            {viewTitles[activeView]?.includes('SYSTEM') || viewTitles[activeView]?.includes('ADMIN') ? '' : t('topbar.case')}
-                        </span>
-                        <span className="text-text-secondary text-[11px] mono truncate">{viewTitles[activeView] ?? activeView.toUpperCase()}</span>
+                        {(() => {
+                            // Properly determine if we're on a case-scoped sub-page
+                            const segments = window.location.pathname.split('/').filter(Boolean);
+                            const isCaseSubPage = segments[0] === 'cases' && segments.length >= 3;
+                            const urlCaseId = isCaseSubPage ? segments[1] : null;
+                            const isStandalone = ['dashboard', 'settings', 'admin'].includes(activeView);
+
+                            if (isStandalone) {
+                                return (
+                                    <span className="text-text-secondary text-[11px] mono truncate min-w-[max-content]">
+                                        {viewTitles[activeView] ?? activeView.toUpperCase()}
+                                    </span>
+                                );
+                            }
+
+                            return (
+                                <>
+                                    <span
+                                        className="text-text-muted text-[10px] mono uppercase tracking-widest flex-shrink-0 hover:text-text-primary cursor-pointer transition-colors"
+                                        onClick={() => navigate('/cases')}
+                                    >
+                                        {t('nav.cases') || 'CASES'}
+                                    </span>
+                                    {(urlCaseId || selectedCaseId) && (
+                                        <>
+                                            <span className="text-text-muted text-[10px] mono mx-1">&gt;</span>
+                                            <span
+                                                className="text-text-muted text-[10px] mono uppercase tracking-widest flex-shrink-0 hover:text-text-primary cursor-pointer transition-colors"
+                                                onClick={() => navigate(`/cases/${urlCaseId || selectedCaseId}`)}
+                                            >
+                                                {t('topbar.case') || 'CASE'} #{(urlCaseId || selectedCaseId)?.slice(0, 8)}
+                                            </span>
+                                        </>
+                                    )}
+                                    {isCaseSubPage && (
+                                        <>
+                                            <span className="text-text-muted text-[10px] mono mx-1">&gt;</span>
+                                            <span className="text-accent-cyan text-[11px] mono truncate min-w-[max-content] font-medium">
+                                                {viewTitles[activeView] ?? activeView.toUpperCase()}
+                                            </span>
+                                        </>
+                                    )}
+                                    {!isCaseSubPage && (
+                                        <span className="text-text-secondary text-[11px] mono truncate min-w-[max-content]">
+                                            {viewTitles[activeView] ?? activeView.toUpperCase()}
+                                        </span>
+                                    )}
+                                </>
+                            );
+                        })()}
                     </div>
+
+                    {/* Global Case Selector */}
+                    {!(viewTitles[activeView]?.includes('SYSTEM') || viewTitles[activeView]?.includes('ADMIN') || activeView === 'settings') && (
+                        <div className="ml-4 border-l border-bg-border pl-4">
+                            <select 
+                                value={selectedCaseId || ''} 
+                                onChange={e => {
+                                    setSelectedCaseId(e.target.value);
+                                    if (e.target.value && ['recovery', 'artifacts', 'timeline', 'visualization'].includes(activeView)) {
+                                        navigate(`/cases/${e.target.value}/${activeView}`);
+                                    }
+                                }}
+                                className="bg-bg-elevated border border-bg-border text-text-primary px-3 py-1 rounded-sm text-xs mono focus:border-accent-cyan outline-none w-48"
+                            >
+                                <option value="">Select Case</option>
+                                {cases.map(c => (
+                                    <option key={c.id} value={c.id}>{c.name || `Case ${c.id}`}</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
                 </div>
 
                 {/* Global Search Button */}
@@ -210,11 +294,11 @@ export default function TopBar({ activeView }: Props) {
                         {/* Avatar */}
                         <div className="w-6 h-6 rounded-full bg-accent-cyan/20 border border-accent-cyan/30 flex items-center justify-center flex-shrink-0">
                             <span className="text-accent-cyan text-[10px] font-bold mono">
-                                {user?.firstName?.charAt(0)?.toUpperCase() ?? 'U'}
+                                {initials}
                             </span>
                         </div>
                         <div className="text-left hidden sm:block">
-                            <div className="text-text-primary text-[11px] font-medium leading-none mb-0.5">{user ? `${user.firstName} ${user.lastName}` : ''}</div>
+                            <div className="text-text-primary text-[11px] font-medium leading-none mb-0.5">{displayName}</div>
                             <div className="text-text-muted text-[9px] mono uppercase tracking-wide">{user?.role}</div>
                         </div>
                         <ChevronDown className={`w-3 h-3 text-text-muted transition-transform duration-150 ${dropdownOpen ? 'rotate-180' : ''}`} />
@@ -228,7 +312,7 @@ export default function TopBar({ activeView }: Props) {
                         >
                             {/* User info header */}
                             <div className="px-3.5 py-3 border-b" style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border)' }}>
-                                <div className="text-text-primary text-xs font-medium">{user ? `${user.firstName} ${user.lastName}` : ''}</div>
+                                <div className="text-text-primary text-xs font-medium">{displayName}</div>
                                 <div className="text-text-muted text-[10px] mono mt-0.5 truncate">{user?.email}</div>
                             </div>
 

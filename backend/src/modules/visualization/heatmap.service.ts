@@ -66,7 +66,7 @@ export class HeatmapService {
                 take: MAX_DATA_POINTS,
             }),
             this.prisma.recoveredFile.findMany({
-                where: { caseId, offsetStart: { gt: 0n } },
+                where: { caseId },
                 select: { offsetStart: true, offsetEnd: true, entropyScore: true },
                 take: MAX_DATA_POINTS,
             }),

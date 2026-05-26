@@ -6,13 +6,13 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '@prisma/client';
 
-@Controller('api/v1/cases/:caseId/filesystem')
+@Controller('cases/:caseId/filesystem')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class FileSystemController {
     constructor(private readonly filesystemService: FileSystemService) { }
 
     @Post('parse')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async parse(
         @Param('caseId') caseId: string,
         @Body() dto: ParseFileSystemDto,
@@ -21,7 +21,7 @@ export class FileSystemController {
     }
 
     @Get('search')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async advancedSearch(
         @Param('caseId') caseId: string,
         @Query() query: any,
@@ -30,7 +30,7 @@ export class FileSystemController {
     }
 
     @Get(':id/preview')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async previewFile(
         @Param('caseId') caseId: string,
         @Param('id') fileId: string,
@@ -39,7 +39,7 @@ export class FileSystemController {
     }
 
     @Get()
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async getEntries(
         @Param('caseId') caseId: string,
         @Query() query: FileSystemQueryDto,
@@ -48,13 +48,13 @@ export class FileSystemController {
     }
 
     @Get('deleted')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async getDeleted(@Param('caseId') caseId: string) {
         return this.filesystemService.getDeletedEntries(caseId);
     }
 
     @Get('disk-info')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     async getDiskInfo(@Param('caseId') caseId: string) {
         return this.filesystemService.getDiskImageInfo(caseId);
     }

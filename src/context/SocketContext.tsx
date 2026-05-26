@@ -32,7 +32,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         }
 
         const socketInstance = io(
-            import.meta.env.VITE_API_URL?.replace('/api/v1', '') || 'http://localhost:5000',
+            import.meta.env.VITE_API_URL?.replace('/api/v1', '') || window.location.origin,
             {
                 transports: ['websocket', 'polling'],
                 auth: { token }, // Send JWT for server-side authentication

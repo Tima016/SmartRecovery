@@ -11,7 +11,7 @@ import { authApi } from '../api/auth.api';
 import { TOKEN_KEY } from '../api/client';
 
 // ─── Types ────────────────────────────────────────────────────────────
-export type Role = 'ADMIN' | 'ANALYST' | 'INVESTIGATOR' | 'AUDITOR';
+export type Role = 'ADMIN' | 'USER';
 
 export interface User {
     id: string;
@@ -22,6 +22,25 @@ export interface User {
     isTwoFactorEnabled: boolean;
 }
 
+const normalizeUser = (raw: any): User | null => {
+    if (!raw || typeof raw !== 'object') return null;
+    return {
+        id: raw.id ?? '',
+        email: raw.email ?? '',
+        firstName: raw.firstName ?? raw.name ?? '',
+        lastName: raw.lastName ?? '',
+        role: (raw.role ?? 'USER') as Role,
+        isTwoFactorEnabled: Boolean(raw.isTwoFactorEnabled),
+    };
+};
+
+const readStoredUser = (): User | null => {
+    try {
+        return normalizeUser(JSON.parse(localStorage.getItem(USER_KEY) || 'null'));
+    } catch {
+        return null;
+    }
+};
 
 
 interface AuthContextType {
@@ -68,13 +87,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 // Validate token by fetching current user
                 const data = await authApi.me();
                 if (mountedRef.current) {
-                    setUser(data.user);
+                    const normalized = normalizeUser(data?.user);
+                    setUser(normalized);
+                    if (normalized) {
+                        localStorage.setItem(USER_KEY, JSON.stringify(normalized));
+                    }
                 }
             } catch {
-                // Token invalid or expired — clear stored credentials
-                localStorage.removeItem(TOKEN_KEY);
-                localStorage.removeItem(REFRESH_TOKEN_KEY);
-                localStorage.removeItem(USER_KEY);
+                const localUser = readStoredUser();
+                if (mountedRef.current && localUser) {
+                    setUser(localUser);
+                } else {
+                    // Token invalid or expired — clear stored credentials
+                    localStorage.removeItem(TOKEN_KEY);
+                    localStorage.removeItem(REFRESH_TOKEN_KEY);
+                    localStorage.removeItem(USER_KEY);
+                }
             } finally {
                 if (mountedRef.current) {
                     setAuthLoading(false);
@@ -96,10 +124,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
             localStorage.setItem(TOKEN_KEY, data.accessToken);
             localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
-            localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+            const normalized = normalizeUser(data.user);
+            localStorage.setItem(USER_KEY, JSON.stringify(normalized));
 
             if (mountedRef.current) {
-                setUser(data.user);
+                setUser(normalized);
             }
         },
         [],
@@ -122,10 +151,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
             localStorage.setItem(TOKEN_KEY, data.accessToken);
             localStorage.setItem(REFRESH_TOKEN_KEY, data.refreshToken);
-            localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+            const normalized = normalizeUser(data.user);
+            localStorage.setItem(USER_KEY, JSON.stringify(normalized));
 
             if (mountedRef.current) {
-                setUser(data.user);
+                setUser(normalized);
             }
         },
         [],

@@ -15,7 +15,7 @@ export class CorrelationController {
 
     @Post('compute')
     @HttpCode(HttpStatus.OK)
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Run correlation engine for a case (persists results)' })
     @ApiResponse({ status: 200, description: 'Correlation computation result' })
     computeCorrelations(@Param('caseId', ParseUUIDPipe) caseId: string) {
@@ -23,7 +23,7 @@ export class CorrelationController {
     }
 
     @Get('graph')
-    @Roles(UserRole.ADMIN, UserRole.INVESTIGATOR, UserRole.ANALYST, UserRole.AUDITOR)
+    @Roles(UserRole.ADMIN, UserRole.USER)
     @ApiOperation({ summary: 'Get normalized correlation graph (nodes + edges)' })
     @ApiResponse({
         status: 200,
